@@ -77,6 +77,7 @@ app.listen(PORT, () => {
     console.log(`  POST   /api/devices/:imei/unlock`);
     console.log(`  POST   /api/devices/:imei/deregister`);
     console.log(`  POST   /api/devices/:imei/controls`);
+    console.log(`  POST   /api/devices/:imei/unlock-all`);
     console.log(`  POST   /api/devices/:imei/location`);
     console.log(`  GET    /api/devices/:imei/status`);
     console.log(`  GET    /api/devices/:imei/sms-codes`);

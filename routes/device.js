@@ -563,6 +563,62 @@ router.post('/:imei/controls', protect, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
+//  UNLOCK ALL CONTROLS
+// ══════════════════════════════════════════════
+
+// POST /api/devices/:imei/unlock-all
+// Resets all controls + appRestrictions to false and sends FCM unlock_all command
+router.post('/:imei/unlock-all', protect, async (req, res) => {
+    try {
+        const query = { imei: req.params.imei };
+        if (req.user.role !== 'admin') query.shopkeeper = req.user._id;
+
+        const device = await Device.findOne(query);
+        if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+
+        console.log(`[Unlock All] Resetting all controls for IMEI: ${req.params.imei}`);
+
+        // Reset ALL hardware controls to false
+        device.controls.usbLock            = false;
+        device.controls.cameraDisabled     = false;
+        device.controls.installBlocked     = false;
+        device.controls.uninstallBlocked   = false;
+        device.controls.settingsBlocked    = false;
+        device.controls.debuggingBlocked   = false;
+        device.controls.outgoingCallsBlocked = false;
+        device.controls.softResetBlocked   = false;
+        device.controls.softBootBlocked    = false;
+        device.controls.autoLock           = false;
+        device.controls.warningAudio       = false;
+        device.controls.warningWallpaper   = null;
+
+        // Reset ALL app restrictions to false
+        device.appRestrictions.whatsapp  = false;
+        device.appRestrictions.facebook  = false;
+        device.appRestrictions.instagram = false;
+        device.appRestrictions.youtube   = false;
+        device.appRestrictions.chrome    = false;
+        device.appRestrictions.telegram  = false;
+        device.appRestrictions.hotstar   = false;
+
+        await device.save();
+
+        // Single FCM command — Android will clear everything
+        await sendFCM(device.fcmToken, {
+            type: 'CONTROL',
+            command: 'unlock_all',
+            target: 'device',
+            state: 'true'
+        });
+
+        res.json({ success: true, message: 'All controls unlocked successfully' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// ══════════════════════════════════════════════
 //  LOCATION & FCM TOKEN (called by device app)
 // ══════════════════════════════════════════════
 
