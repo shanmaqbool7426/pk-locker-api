@@ -1,0 +1,240 @@
+{
+	"info": {
+		"_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+		"name": "PKlocker API",
+		"description": "API collection for managing mobile device locking and tracking.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Devices",
+			"item": [
+				{
+					"name": "Register Device",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"imei\": \"358210000000001\",\n  \"imei2\": \"358210000000009\",\n  \"brand\": \"TECNO\",\n  \"model\": \"CL6\",\n  \"androidVersion\": \"13\",\n  \"customerName\": \"Shan Maqbool\",\n  \"cnic\": \"42101-1234567-1\",\n  \"phoneNumber\": \"03001234567\",\n  \"productName\": \"Spark 20\",\n  \"totalPrice\": 45000,\n  \"downPayment\": 15000,\n  \"balance\": 30000,\n  \"emiTenure\": \"12 Months\",\n  \"emiStartDate\": \"2024-03-15\",\n  \"emiAmount\": 2500\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/register-device",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"register-device"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Devices",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/devices",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"devices"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Lock Device",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/devices/:imei/lock",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"devices",
+								":imei",
+								"lock"
+							],
+							"variable": [
+								{
+									"key": "imei",
+									"value": "358210000000001"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Unlock Device",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/devices/:imei/unlock",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"devices",
+								":imei",
+								"unlock"
+							],
+							"variable": [
+								{
+									"key": "imei",
+									"value": "358210000000001"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Advanced Control",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"action\": \"cameraDisabled\",\n  \"state\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/devices/:imei/advanced-control",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"devices",
+								":imei",
+								"advanced-control"
+							],
+							"variable": [
+								{
+									"key": "imei",
+									"value": "358210000000001"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Location",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"lat\": 24.8607,\n  \"lng\": 67.0011\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/devices/:imei/location",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"devices",
+								":imei",
+								"location"
+							],
+							"variable": [
+								{
+									"key": "imei",
+									"value": "358210000000001"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update FCM Token",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"imei\": \"358210000000001\",\n  \"fcmToken\": \"your_fcm_token_here\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/devices/update-token",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"devices",
+								"update-token"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Stats",
+			"item": [
+				{
+					"name": "Get Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/stats",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"api",
+								"stats"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5000",
+			"type": "string"
+		}
+	]
+}
