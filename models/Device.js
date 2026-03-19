@@ -21,6 +21,7 @@ const deviceSchema = new mongoose.Schema({
     cnic: { type: String, required: true },
     phoneNumber: { type: String, required: true },
     profilePicture: { type: String, default: null }, // URL or base64
+    cnicProofImage: { type: String, default: null }, // NEW: proof of CNIC (base64 or URL)
 
     // EMI Details
     productName: { type: String },
@@ -35,7 +36,8 @@ const deviceSchema = new mongoose.Schema({
     guarantor: {
         name: { type: String },
         mobile: { type: String },
-        address: { type: String }
+        address: { type: String },
+        cnicProofImage: { type: String, default: null } // NEW: Guarantor's CNIC proof image
     },
 
     // Status & Location

@@ -1,31 +1,5 @@
 const express = require('express');
 const router = express.Router();
-
-// Update Device FCM Token
-router.post('/update-token', async (req, res) => {
-    try {
-        const { imei, fcmToken } = req.body;
-        if (!imei || !fcmToken) {
-            return res.status(400).json({ success: false, message: 'IMEI and fcmToken are required' });
-        }
-
-        const device = await Device.findOneAndUpdate(
-            { imei: imei },
-            { fcmToken: fcmToken },
-            { new: true }
-        );
-
-        if (!device) {
-            return res.status(404).json({ success: false, message: 'Device not found' });
-        }
-
-        console.log(`[Token Sync] Updated for IMEI: ${imei}. Token: ${fcmToken.substring(0, 10)}...${fcmToken.substring(fcmToken.length - 10)}`);
-        res.json({ success: true, message: 'FCM Token updated successfully' });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ success: false, message: 'Server error' });
-    }
-});
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 const Device = require('../models/Device');

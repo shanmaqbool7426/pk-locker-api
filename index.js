@@ -34,6 +34,20 @@ app.use('/api/devices', deviceRoutes);
 app.use('/api/emis', emiRoutes);
 app.use('/api/admin', adminRoutes);
 
+// ── Root Route for Vercel ────────────────────
+app.get('/', (req, res) => {
+    res.send(`
+        <div style="font-family: sans-serif; text-align: center; padding: 50px; background: #0F172A; color: white; height: 100vh;">
+            <h1 style="color: #3B82F6;">🚀 PK LOCKER SERVER</h1>
+            <p>System is online and secure.</p>
+            <div style="background: rgba(255,255,255,0.05); padding: 20px; display: inline-block; border-radius: 10px;">
+                Status: <span style="color: #22C55E;">ACTIVE</span><br>
+                Uptime: ${process.uptime().toFixed(0)} seconds
+            </div>
+        </div>
+    `);
+});
+
 // ── Health check ─────────────────────────────
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -57,45 +71,13 @@ mongoose.connect(MONGO_URI)
     .catch(err => console.error('MongoDB connection error:', err));
 
 
-const PORT = 5000;
-app.listen(PORT, () => {
-    console.log(`\n🚀 U.S. Locker API running on port ${PORT}`);
-    console.log(`\nAvailable routes:`);
-    console.log(`  POST   /api/auth/login`);
-    console.log(`  POST   /api/auth/register          (admin only)`);
-    console.log(`  GET    /api/auth/me`);
-    console.log(`  PATCH  /api/auth/change-password`);
-    console.log(`  ─────────────────────────────────`);
-    console.log(`  POST   /api/devices/register`);
-    console.log(`  POST   /api/devices/update-token`);
-    console.log(`  GET    /api/devices/stats`);
-    console.log(`  GET    /api/devices                (active customers)`);
-    console.log(`  GET    /api/devices/deregistered`);
-    console.log(`  GET    /api/devices/:imei`);
-    console.log(`  PUT    /api/devices/:imei`);
-    console.log(`  POST   /api/devices/:imei/lock`);
-    console.log(`  POST   /api/devices/:imei/unlock`);
-    console.log(`  POST   /api/devices/:imei/deregister`);
-    console.log(`  POST   /api/devices/:imei/controls`);
-    console.log(`  POST   /api/devices/:imei/unlock-all`);
-    console.log(`  POST   /api/devices/:imei/location`);
-    console.log(`  GET    /api/devices/:imei/status`);
-    console.log(`  GET    /api/devices/:imei/sms-codes`);
-    console.log(`  GET    /api/devices/:imei/location`);
-    console.log(`  ─────────────────────────────────`);
-    console.log(`  GET    /api/emis/upcoming`);
-    console.log(`  GET    /api/emis/device/:imei`);
-    console.log(`  POST   /api/emis/:emiId/mark-paid`);
-    console.log(`  PUT    /api/emis/device/:imei`);
-    console.log(`  GET    /api/emis/history/:imei`);
-    console.log(`  ─────────────────────────────────`);
-    console.log(`  GET    /api/admin/shopkeepers       (admin only)`);
-    console.log(`  POST   /api/admin/shopkeepers       (admin only)`);
-    console.log(`  PATCH  /api/admin/shopkeepers/:id   (admin only)`);
-    console.log(`  DELETE /api/admin/shopkeepers/:id   (admin only)`);
-    console.log(`  POST   /api/admin/keys/allocate     (admin only)`);
-    console.log(`  GET    /api/admin/keys              (admin only)`);
-    console.log(`  GET    /api/admin/devices           (admin only)`);
-    console.log(`  GET    /api/admin/stats             (admin only)`);
-    console.log('');
-});
+// ── FOR VERCEL DEPLOYMENT ────────────────────
+// Export and conditionally listen
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = 5000;
+    app.listen(PORT, () => {
+        console.log(`\n🚀 APK Gateway running on port ${PORT}`);
+    });
+}
+
+module.exports = app;
