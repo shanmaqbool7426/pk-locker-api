@@ -8,7 +8,7 @@ require('dotenv').config();
 // ── Firebase Admin Init ──────────────────────
 try {
     let serviceAccount;
-    
+
     // Check if we have the JSON as an Environment Variable (Secure for Vercel)
     if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
         serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
@@ -87,11 +87,10 @@ mongoose.connect(MONGO_URI)
 
 // ── FOR VERCEL DEPLOYMENT ────────────────────
 // Export and conditionally listen
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = 5000;
-    app.listen(PORT, () => {
-        console.log(`\n🚀 APK Gateway running on port ${PORT}`);
-    });
-}
+
+const PORT = 5000;
+app.listen(PORT, () => {
+    console.log(`\n🚀 APK Gateway running on port ${PORT}`);
+});
 
 module.exports = app;
