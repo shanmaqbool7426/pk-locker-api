@@ -167,10 +167,10 @@ router.post('/register', protect, async (req, res) => {
 // GET /api/devices
 // Active (non-deregistered) customers for current shopkeeper
 // Query: ?search=name_or_mobile&platform=android|ios
-router.get('/', async (req, res) => {
+router.get('/', protect, async (req, res) => {
     try {
         const { search, platform } = req.query;
-        const query = { isDeregistered: false };
+        const query = { shopkeeper: req.user._id, isDeregistered: false };
 
         if (platform) query.platform = platform;
 
