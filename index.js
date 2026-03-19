@@ -5,15 +5,29 @@ const admin = require('firebase-admin');
 require('dotenv').config();
 
 // ── Firebase Admin Init ──────────────────────
+// ── Firebase Admin Init ──────────────────────
 try {
-    // File is named serviceAccountKey.json.json in this project
-    const serviceAccount = require('./serviceAccountKey.json.json');
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-    console.log('Firebase Admin initialized');
+    let serviceAccount;
+    
+    // Check if we have the JSON as an Environment Variable (Secure for Vercel)
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+        console.log('Firebase Admin initialized from Environment Variables');
+    } else {
+        // Fallback to local file for Development
+        // File is named serviceAccountKey.json.json in this project
+        serviceAccount = require('./serviceAccountKey.json.json');
+        console.log('Firebase Admin initialized from local file');
+    }
+
+    if (serviceAccount) {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+    }
 } catch (error) {
-    console.warn('Firebase Admin: serviceAccountKey.json not found — FCM disabled');
+    console.warn('Firebase Admin: serviceAccountKey not found in Env or File — FCM disabled');
+    console.error(error.message);
 }
 
 const app = express();
