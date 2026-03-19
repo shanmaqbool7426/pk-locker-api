@@ -167,10 +167,10 @@ router.post('/register', protect, async (req, res) => {
 // GET /api/devices
 // Active (non-deregistered) customers for current shopkeeper
 // Query: ?search=name_or_mobile&platform=android|ios
-router.get('/', protect, async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const { search, platform } = req.query;
-        const query = { shopkeeper: req.user._id, isDeregistered: false };
+        const query = { isDeregistered: false };
 
         if (platform) query.platform = platform;
 
@@ -553,27 +553,27 @@ router.post('/:imei/unlock-all', protect, async (req, res) => {
         console.log(`[Unlock All] Resetting all controls for IMEI: ${req.params.imei}`);
 
         // Reset ALL hardware controls to false
-        device.controls.usbLock            = false;
-        device.controls.cameraDisabled     = false;
-        device.controls.installBlocked     = false;
-        device.controls.uninstallBlocked   = false;
-        device.controls.settingsBlocked    = false;
-        device.controls.debuggingBlocked   = false;
+        device.controls.usbLock = false;
+        device.controls.cameraDisabled = false;
+        device.controls.installBlocked = false;
+        device.controls.uninstallBlocked = false;
+        device.controls.settingsBlocked = false;
+        device.controls.debuggingBlocked = false;
         device.controls.outgoingCallsBlocked = false;
-        device.controls.softResetBlocked   = false;
-        device.controls.softBootBlocked    = false;
-        device.controls.autoLock           = false;
-        device.controls.warningAudio       = false;
-        device.controls.warningWallpaper   = null;
+        device.controls.softResetBlocked = false;
+        device.controls.softBootBlocked = false;
+        device.controls.autoLock = false;
+        device.controls.warningAudio = false;
+        device.controls.warningWallpaper = null;
 
         // Reset ALL app restrictions to false
-        device.appRestrictions.whatsapp  = false;
-        device.appRestrictions.facebook  = false;
+        device.appRestrictions.whatsapp = false;
+        device.appRestrictions.facebook = false;
         device.appRestrictions.instagram = false;
-        device.appRestrictions.youtube   = false;
-        device.appRestrictions.chrome    = false;
-        device.appRestrictions.telegram  = false;
-        device.appRestrictions.hotstar   = false;
+        device.appRestrictions.youtube = false;
+        device.appRestrictions.chrome = false;
+        device.appRestrictions.telegram = false;
+        device.appRestrictions.hotstar = false;
 
         await device.save();
 
