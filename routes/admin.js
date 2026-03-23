@@ -312,5 +312,41 @@ router.get('/stats', async (req, res) => {
     }
 });
 
+// ══════════════════════════════════════════════
+//  MANUAL TRIGGERS
+// ══════════════════════════════════════════════
+
+// POST /api/admin/trigger-emi-check
+// Manually triggers the Daily EMI compliance check (usually runs via node-cron at midnight)
+router.post('/trigger-emi-check', async (req, res) => {
+    try {
+        const { checkOverdueEmis } = require('../cron/emiEnforcer');
+        
+        // Run asynchronously, don't wait for completion if it takes long, or await it.
+        // It's safer to await it for a controlled response.
+        await checkOverdueEmis();
+        
+        res.json({ success: true, message: 'EMI compliance check executed successfully.' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'Server error while triggering EMI check' });
+    }
+});
+
+// POST /api/admin/trigger-emi-reminders
+// Manually triggers the EMI Reminders Check (usually runs via node-cron at 9:00 AM)
+router.post('/trigger-emi-reminders', async (req, res) => {
+    try {
+        const { checkUpcomingReminders } = require('../cron/emiReminders');
+        
+        await checkUpcomingReminders();
+        
+        res.json({ success: true, message: 'EMI Reminders check executed successfully.' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'Server error while triggering EMI reminders' });
+    }
+});
+
 module.exports = router;
 

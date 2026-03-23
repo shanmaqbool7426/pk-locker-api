@@ -32,6 +32,10 @@ try {
 
 const app = express();
 
+// ── Static Files (APK Download Gateway) ──────
+const path = require('path');
+app.use('/dl', express.static(path.join(__dirname, 'public/apk')));
+
 // ── Middleware ───────────────────────────────
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // 10 mb to allow base64 profile pictures
@@ -79,11 +83,27 @@ app.use((err, req, res, next) => {
 });
 
 // ── MongoDB Connection ────────────────────────
-const MONGO_URI = 'mongodb+srv://auto-wheel-apps:AutoWheels123@auto-wheels.m4wrf.mongodb.net/pklocker';
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('Connected to MongoDB'))
-    .catch(err => console.error('MongoDB connection error:', err));
+// EMI Enforcement Cron Job
+const { initEmiCron } = require('./cron/emiEnforcer');
+const { initRemindersCron } = require('./cron/emiReminders');
 
+const connectDB = async () => {
+    try {
+        const mongoUri = process.env.MONGO_URI || 'mongodb+srv://auto-wheel-apps:AutoWheels123@auto-wheels.m4wrf.mongodb.net/pklocker';
+        await mongoose.connect(mongoUri);
+        console.log('MongoDB connection SUCCESS');
+        
+        // Start the automated enforcement cron tasks
+        initEmiCron();
+        initRemindersCron();
+
+    } catch (error) {
+        console.error('MongoDB connection FAIL', error);
+        process.exit(1);
+    }
+};
+
+connectDB();
 
 // ── FOR VERCEL DEPLOYMENT ────────────────────
 // Export and conditionally listen

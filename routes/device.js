@@ -5,6 +5,7 @@ const admin = require('firebase-admin');
 const Device = require('../models/Device');
 const EmiPayment = require('../models/EmiPayment');
 const Key = require('../models/Key');
+const Shopkeeper = require('../models/Shopkeeper');
 const { protect, adminOnly } = require('../middleware/auth');
 
 // ─────────────────────────────────────────────
@@ -185,7 +186,7 @@ router.get('/', protect, async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture status balance emiTenure emiAmount emiStartDate registeredAt smsCodes controls appRestrictions')
+            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture status balance emiTenure emiAmount emiStartDate registeredAt smsCodes controls appRestrictions location geofence locationHistory')
             .sort({ registeredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
@@ -212,7 +213,7 @@ router.get('/deregistered', protect, async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture status deregisteredAt registeredAt smsCodes controls appRestrictions')
+            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture status deregisteredAt registeredAt smsCodes controls appRestrictions location geofence locationHistory')
             .sort({ deregisteredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
@@ -255,6 +256,88 @@ router.get('/stats', protect, async (req, res) => {
                 devices: { total: totalDevices, locked: lockedDevices, deregistered: deregisteredDevices }
             }
         });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// GET /api/devices/dashboard-analytics
+// Comprehensive analytics for shopkeeper dashboard
+router.get('/dashboard-analytics', protect, async (req, res) => {
+    try {
+        const shopkeeperId = req.user._id;
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        // 1. Monthly Collection (Total amount paid this month)
+        const monthlyCollection = await EmiPayment.aggregate([
+            { $match: { shopkeeper: shopkeeperId, status: 'Paid', paidDate: { $gte: startOfMonth } } },
+            { $group: { _id: null, total: { $sum: '$amount' } } }
+        ]);
+
+        // 2. EMI Collection Rate (Ratio of Paid vs Total Due)
+        const collectionStats = await EmiPayment.aggregate([
+            { $match: { shopkeeper: shopkeeperId, dueDate: { $lte: now } } },
+            { $group: { 
+                _id: null, 
+                paid: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, 1, 0] } },
+                total: { $sum: 1 }
+            } }
+        ]);
+        const collectionRate = collectionStats.length > 0 ? (collectionStats[0].paid / collectionStats[0].total * 100).toFixed(1) : 0;
+
+        // 3. High Risk Customers (>= 2 Overdue EMIs)
+        const highRiskResults = await EmiPayment.aggregate([
+            { $match: { shopkeeper: shopkeeperId, status: 'Unpaid', dueDate: { $lte: now } } },
+            { $group: { _id: '$device', overdueCount: { $sum: 1 } } },
+            { $match: { overdueCount: { $gte: 2 } } },
+            { $lookup: { from: 'devices', localField: '_id', foreignField: '_id', as: 'deviceInfo' } },
+            { $unwind: '$deviceInfo' }
+        ]);
+
+        // 4. Overdue Trend (Unpaid EMIs by Month for last 6 months)
+        const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+        const overdueTrend = await EmiPayment.aggregate([
+            { $match: { shopkeeper: shopkeeperId, status: 'Unpaid', dueDate: { $gte: sixMonthsAgo, $lte: now } } },
+            { $group: { 
+                _id: { month: { $month: '$dueDate' }, year: { $year: '$dueDate' } }, 
+                count: { $sum: 1 } 
+            } },
+            { $sort: { '_id.year': 1, '_id.month': 1 } }
+        ]);
+
+        // 5. Best Paying Customers (Top 5 by total paid amount)
+        const bestCustomers = await EmiPayment.aggregate([
+            { $match: { shopkeeper: shopkeeperId, status: 'Paid' } },
+            { $group: { _id: '$device', totalPaid: { $sum: '$amount' } } },
+            { $sort: { totalPaid: -1 } },
+            { $limit: 5 },
+            { $lookup: { from: 'devices', localField: '_id', foreignField: '_id', as: 'deviceInfo' } },
+            { $unwind: '$deviceInfo' }
+        ]);
+
+        // 6. Device Status (Locked vs Unlocked)
+        const deviceStatus = await Device.aggregate([
+            { $match: { shopkeeper: shopkeeperId, isDeregistered: false } },
+            { $group: { _id: '$status', count: { $sum: 1 } } }
+        ]);
+
+        res.json({
+            success: true,
+            data: {
+                monthlyCollection: monthlyCollection[0]?.total || 0,
+                collectionRate,
+                highRiskCount: highRiskResults.length,
+                overdueTrend: overdueTrend.map(t => ({ month: t._id.month, count: t.count })),
+                bestCustomers: bestCustomers.map(c => ({ name: c.deviceInfo.customerName, amount: c.totalPaid })),
+                deviceStats: {
+                    locked: deviceStatus.find(s => s._id === 'Locked')?.count || 0,
+                    unlocked: deviceStatus.find(s => s._id === 'Unlocked')?.count || 0
+                }
+            }
+        });
+
     } catch (err) {
         console.error(err);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -475,7 +558,26 @@ router.post('/:imei/controls', protect, async (req, res) => {
         let commandType = 'state_change';
         let targetName = action;
 
-        console.log(`[Control Request] Action: ${action}, State: ${state}, IMEI: ${req.params.imei}`);
+        console.log(`[Control Request] Action: ${action}, State: ${JSON.stringify(state)}, IMEI: ${req.params.imei}`);
+
+        // 0. SPECIAL: Geofence Update
+        if (action === 'geofence_update') {
+            const currentGeofence = device.geofence || {};
+            
+            device.geofence = {
+                isEnabled: !!state.isEnabled,
+                lat: state.lat !== undefined ? state.lat : currentGeofence.lat,
+                lng: state.lng !== undefined ? state.lng : currentGeofence.lng,
+                radius: state.radius !== undefined ? Number(state.radius) : (currentGeofence.radius || 5),
+                lastBreachAt: currentGeofence.lastBreachAt || null
+            };
+            
+            console.log(`[Geofence Update] Final Model: ${JSON.stringify(device.geofence)}`);
+            
+            device.markModified('geofence');
+            await device.save();
+            return res.json({ success: true, message: 'Geofence protocol updated successfully' });
+        }
 
         // 1. Map Hardware Controls
         if (device.controls[action] !== undefined) {
@@ -488,6 +590,7 @@ router.post('/:imei/controls', protect, async (req, res) => {
             else if (action === 'cameraDisabled') targetName = 'camera';
             else if (action === 'settingsBlocked') targetName = 'settings';
             else if (action === 'autoLock') targetName = 'auto_lock';
+            else if (action === 'autoLockOnSimChange') targetName = 'auto_lock_sim';
             else if (action === 'warningAudio') targetName = 'alarm';
             else if (action === 'installBlocked') targetName = 'install';
             else if (action === 'uninstallBlocked') targetName = 'uninstall';
@@ -512,6 +615,26 @@ router.post('/:imei/controls', protect, async (req, res) => {
             updated = true;
             commandType = 'lock';
             targetName = 'device';
+        }
+        // 4. Manual Push Notification
+        else if (action === 'manual_notification') {
+            const { title, body } = state;
+            console.log(`[Manual Notification] Sending to: ${device.customerName}, Title: ${title}`);
+            
+            if (device.fcmToken) {
+                await admin.messaging().send({
+                    token: device.fcmToken,
+                    notification: {
+                        title: title || 'Security Warning!',
+                        body: body || 'Outstanding EMI detected. Please pay to avoid device lock.'
+                    },
+                    data: {
+                        type: 'MANUAL_ALERT',
+                        imei: device.imei
+                    }
+                });
+            }
+            return res.json({ success: true, message: 'Push notification sent to device' });
         }
 
         if (!updated) {
@@ -596,17 +719,105 @@ router.post('/:imei/unlock-all', protect, async (req, res) => {
 //  LOCATION & FCM TOKEN (called by device app)
 // ══════════════════════════════════════════════
 
+// ─────────────────────────────────────────────
+// Helper: Calculate distance between two points (km)
+// ─────────────────────────────────────────────
+const getDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Radius of earth in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+};
+
 // POST /api/devices/:imei/location
+// Receives location, saves to history (7 days), checks geofence
 router.post('/:imei/location', async (req, res) => {
     try {
         const { lat, lng } = req.body;
-        const device = await Device.findOneAndUpdate(
-            { imei: req.params.imei },
-            { location: { lat, lng, updatedAt: new Date() } },
-            { new: true }
-        );
+        const imei = req.params.imei;
+
+        const device = await Device.findOne({ imei }).populate('shopkeeper');
         if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
-        res.json({ success: true, message: 'Location updated' });
+
+        const now = new Date();
+
+        // 1. Update Core Location
+        device.location = { lat, lng, updatedAt: now };
+
+        // 2. Add to History
+        device.locationHistory.push({ lat, lng, timestamp: now });
+
+        // 3. Keep only last 7 days of history
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        device.locationHistory = device.locationHistory.filter(h => h.timestamp > sevenDaysAgo);
+
+        // 4. Geofencing Check
+        if (device.geofence.isEnabled && device.geofence.lat && device.geofence.lng) {
+            const distance = getDistance(lat, lng, device.geofence.lat, device.geofence.lng);
+            
+            if (distance > device.geofence.radius) {
+                console.warn(`[GEOFENCE] BREACH: Device ${imei} is ${distance.toFixed(2)}km away from center.`);
+                
+                // Only alert if last breach was more than 1 hour ago (debounce)
+                const lastBreach = device.geofence.lastBreachAt;
+                if (!lastBreach || (now - lastBreach > 3600000)) {
+                    device.geofence.lastBreachAt = now;
+                    device.alerts.push({
+                        type: 'GEOFENCE_BREACH',
+                        message: `Device left its assigned zone (${distance.toFixed(2)}km away).`
+                    });
+
+                    // Notify Shopkeeper via FCM
+                    if (device.shopkeeper && device.shopkeeper.fcmToken) {
+                        try {
+                            await admin.messaging().send({
+                                token: device.shopkeeper.fcmToken,
+                                notification: {
+                                    title: '🚨 Geofence Breach!',
+                                    body: `Warning: ${device.customerName}'s device is outside the city limits or assigned zone.`
+                                },
+                                data: {
+                                    type: 'GEOFENCE_ALERT',
+                                    imei: device.imei,
+                                    distance: distance.toFixed(2)
+                                }
+                            });
+                        } catch (err) { console.error('FCM Error (Geofence):', err.message); }
+                    }
+                }
+            }
+        }
+
+        await device.save();
+        res.json({ success: true, message: 'Location updated and analyzed' });
+    } catch (err) {
+        console.error('Location Error:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// GET /api/devices/:imei/location-history
+// Returns 7 days of location data for rendering a trail on map
+router.get('/:imei/location-history', protect, async (req, res) => {
+    try {
+        const query = { imei: req.params.imei };
+        if (req.user.role !== 'admin') query.shopkeeper = req.user._id;
+
+        const device = await Device.findOne(query).select('imei customerName locationHistory');
+        if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+
+        res.json({
+            success: true,
+            data: {
+                imei: device.imei,
+                customerName: device.customerName,
+                history: device.locationHistory
+            }
+        });
     } catch (err) {
         res.status(500).json({ success: false, message: 'Server error' });
     }
@@ -615,14 +826,111 @@ router.post('/:imei/location', async (req, res) => {
 // POST /api/devices/update-token
 router.post('/update-token', async (req, res) => {
     try {
-        const { imei, fcmToken } = req.body;
+        const { imei, fcmToken, isShopkeeper } = req.body;
+        
+        if (isShopkeeper) {
+            // If the user is logged in, use their ID from the request or provide it in body if unauth (risky)
+            // Better to use protect middleware for shopkeeper token updates
+            return res.status(400).json({ success: false, message: 'Use /update-shopkeeper-token for shopkeepers' });
+        }
+
         if (!imei || !fcmToken) {
             return res.status(400).json({ success: false, message: 'imei and fcmToken are required' });
         }
         const device = await Device.findOneAndUpdate({ imei }, { fcmToken }, { new: true });
         if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
-        res.json({ success: true, message: 'FCM token updated' });
+        res.json({ success: true, message: 'Device FCM token updated' });
     } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// POST /api/devices/update-shopkeeper-token
+router.post('/update-shopkeeper-token', protect, async (req, res) => {
+    try {
+        const { fcmToken } = req.body;
+        if (!fcmToken) return res.status(400).json({ success: false, message: 'fcmToken is required' });
+
+        const shopkeeper = await Shopkeeper.findByIdAndUpdate(req.user._id, { fcmToken }, { new: true });
+        res.json({ success: true, message: 'Shopkeeper FCM token updated' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// POST /api/devices/:imei/sim-changed
+// Body: { iccid, phoneNumber }
+router.post('/:imei/sim-changed', async (req, res) => {
+    try {
+        const { iccid, phoneNumber } = req.body;
+        const imei = req.params.imei;
+
+        const device = await Device.findOne({ imei }).populate('shopkeeper');
+        if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+
+        console.log(`[SIM Change] IMEI: ${imei}, New ICCID: ${iccid}`);
+
+        // 1. Update SIM Info History
+        if (device.simInfo.iccid && device.simInfo.iccid !== iccid) {
+            device.simInfo.history.push({
+                iccid: device.simInfo.iccid,
+                phoneNumber: device.simInfo.phoneNumber,
+                changedAt: device.simInfo.lastUpdated || new Date()
+            });
+        }
+
+        device.simInfo.iccid = iccid;
+        if (phoneNumber && phoneNumber !== device.simInfo.phoneNumber) {
+            device.simInfo.phoneNumber = phoneNumber;
+            // Also update top-level phoneNumber so shopkeeper can see it clearly
+            device.phoneNumber = phoneNumber;
+        }
+        device.simInfo.lastUpdated = new Date();
+
+        // 2. Check Auto-Lock
+        let lockApplied = false;
+        if (device.controls.autoLockOnSimChange) {
+            device.status = 'Locked';
+            lockApplied = true;
+            
+            // Send FCM to device to enforce lock
+            await sendFCM(device.fcmToken, {
+                type: 'CONTROL',
+                command: 'lock',
+                target: 'device',
+                state: 'true'
+            });
+        }
+
+        await device.save();
+
+        // 3. Notify Shopkeeper
+        if (device.shopkeeper && device.shopkeeper.fcmToken) {
+            await admin.messaging().send({
+                token: device.shopkeeper.fcmToken,
+                notification: {
+                    title: '🚨 SIM Change Alert!',
+                    body: `Customer ${device.customerName} changed their SIM card. Device ${lockApplied ? 'is now LOCKED' : 'detected change'}.`
+                },
+                data: {
+                    type: 'SIM_ALERT',
+                    imei: device.imei,
+                    customerName: device.customerName,
+                    newIccid: iccid || 'Unknown'
+                }
+            });
+            console.log(`[SIM Change] Notification sent to shopkeeper: ${device.shopkeeper.name}`);
+        }
+
+        res.json({ 
+            success: true, 
+            message: 'SIM change recorded', 
+            autoLocked: lockApplied 
+        });
+
+    } catch (err) {
+        console.error('SIM Change Error:', err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });

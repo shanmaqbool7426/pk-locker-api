@@ -51,6 +51,24 @@ const deviceSchema = new mongoose.Schema({
         lng: { type: Number },
         updatedAt: { type: Date }
     },
+    geofence: {
+        lat: { type: Number },
+        lng: { type: Number },
+        radius: { type: Number, default: 5 }, // radius in km (city limit)
+        isEnabled: { type: Boolean, default: false },
+        lastBreachAt: { type: Date, default: null }
+    },
+
+    locationHistory: [{
+        lat: { type: Number },
+        lng: { type: Number },
+        timestamp: { type: Date, default: Date.now }
+    }],
+    alerts: [{
+        type: { type: String }, // e.g. "GEOFENCE_BREACH", "SIM_CHANGE"
+        message: { type: String },
+        timestamp: { type: Date, default: Date.now }
+    }],
 
     // Controls (Restriction Flags)
     controls: {
@@ -64,8 +82,21 @@ const deviceSchema = new mongoose.Schema({
         softResetBlocked: { type: Boolean, default: false },
         softBootBlocked: { type: Boolean, default: false },
         autoLock: { type: Boolean, default: false },
+        autoLockOnSimChange: { type: Boolean, default: false }, // NEW FEATURE
         warningWallpaper: { type: String, default: null }, // URL to image
         warningAudio: { type: Boolean, default: false }
+    },
+
+    // SIM Information Tracking
+    simInfo: {
+        iccid: { type: String, default: null },
+        phoneNumber: { type: String, default: null }, // reading number is restricted on newer Androids, but ICCID works
+        lastUpdated: { type: Date, default: null },
+        history: [{
+            iccid: String,
+            phoneNumber: String,
+            changedAt: { type: Date, default: Date.now }
+        }]
     },
 
     // Social Media / App Controls
