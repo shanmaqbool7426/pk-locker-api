@@ -68,7 +68,7 @@ app.get('/', (req, res) => {
 
 // ── Health check ─────────────────────────────
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({ status: 'okk', timestamp: new Date().toISOString() });
 });
 
 // ── 404 handler ──────────────────────────────
@@ -92,7 +92,7 @@ const connectDB = async () => {
         const mongoUri = process.env.MONGO_URI || 'mongodb+srv://auto-wheel-apps:AutoWheels123@auto-wheels.m4wrf.mongodb.net/pklocker';
         await mongoose.connect(mongoUri);
         console.log('MongoDB connection SUCCESS');
-        
+
         // Start the automated enforcement cron tasks
         initEmiCron();
         initRemindersCron();
