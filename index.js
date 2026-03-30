@@ -46,11 +46,13 @@ const authRoutes = require('./routes/auth');
 const deviceRoutes = require('./routes/device');
 const emiRoutes = require('./routes/emi');
 const adminRoutes = require('./routes/admin');
+const keyOrderRoutes = require('./routes/keyOrders');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/emis', emiRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/key-orders', keyOrderRoutes);
 
 // ── Root Route for Vercel ────────────────────
 app.get('/', (req, res) => {
@@ -89,7 +91,7 @@ const { initRemindersCron } = require('./cron/emiReminders');
 
 const connectDB = async () => {
     try {
-        const mongoUri = process.env.MONGO_URI || 'mongodb+srv://auto-wheel-apps:AutoWheels123@auto-wheels.m4wrf.mongodb.net/pklocker';
+        const mongoUri = 'mongodb+srv://auto-wheel-apps:AutoWheels123@auto-wheels.m4wrf.mongodb.net/pklocker';
         await mongoose.connect(mongoUri);
         console.log('MongoDB connection SUCCESS');
 
