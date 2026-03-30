@@ -155,6 +155,29 @@ router.post('/register', protect, async (req, res) => {
                 smsCodes: device.smsCodes
             }
         });
+
+        // ─── NOTIFY SHOPKEEPER ──────────────────────────────────────────
+        // Ek bar success response bhej diya, ab background me shopkeeper ko notify karo
+        const shopkeeper = await Shopkeeper.findById(req.user._id);
+        if (shopkeeper && shopkeeper.fcmToken) {
+            try {
+                await admin.messaging().send({
+                    token: shopkeeper.fcmToken,
+                    notification: {
+                        title: ' New Device Registered!',
+                        body: `${customerName} (IMEI: ${imei.substring(0, 8)}...) has been added to your database.`
+                    },
+                    data: {
+                        type: 'NEW_REGISTRATION',
+                        imei: device.imei,
+                        customerName: device.customerName
+                    }
+                });
+                console.log(`[NOTIFY] Shopkeeper notified of new registration: ${imei}`);
+            } catch (err) {
+                console.error('[NOTIFY] Failed to notify shopkeeper:', err.message);
+            }
+        }
     } catch (err) {
         console.error('Register device error:', err);
         res.status(500).json({ success: false, message: 'Server error' });

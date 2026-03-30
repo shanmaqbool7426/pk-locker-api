@@ -184,5 +184,28 @@ router.patch('/change-password', protect, async (req, res) => {
     }
 });
 
+// ─────────────────────────────────────────────
+// PATCH /api/auth/update-fcm-token
+// Body: { fcmToken }
+// ─────────────────────────────────────────────
+router.patch('/update-fcm-token', protect, async (req, res) => {
+    try {
+        const { fcmToken } = req.body;
+        if (!fcmToken) {
+            return res.status(400).json({ success: false, message: 'fcmToken is required' });
+        }
+
+        const shopkeeper = await Shopkeeper.findById(req.user._id);
+        shopkeeper.fcmToken = fcmToken;
+        await shopkeeper.save();
+
+        console.log(`[FCM] Shopkeeper (${shopkeeper.email}) token updated`);
+        res.json({ success: true, message: 'Shopkeeper FCM token updated' });
+    } catch (err) {
+        console.error('Update FCM error:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 module.exports = router;
 
