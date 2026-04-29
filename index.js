@@ -35,6 +35,10 @@ const app = express();
 // ── Static Files (APK Download Gateway) ──────
 const path = require('path');
 app.use('/dl', express.static(path.join(__dirname, 'public/apk')));
+// Backward/forward compatible alias:
+// The Android app QR screen expects `/apk/v6_app.apk` (not `/dl/v6_app.apk`).
+// Serving both paths avoids "downloaded wrong file" provisioning errors.
+app.use('/apk', express.static(path.join(__dirname, 'public/apk')));
 
 // ── Middleware ───────────────────────────────
 app.use(cors());
