@@ -88,10 +88,15 @@ app.use((err, req, res, next) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
+
 // ── MongoDB Connection ────────────────────────
 // EMI Enforcement Cron Job
 const { initEmiCron } = require('./cron/emiEnforcer');
 const { initRemindersCron } = require('./cron/emiReminders');
+
+// Fix for "querySrv ECONNREFUSED" DNS issue on some networks
+const dns = require('dns');
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 const connectDB = async () => {
     try {
