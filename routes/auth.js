@@ -63,11 +63,11 @@ router.post('/login', async (req, res) => {
 // ─────────────────────────────────────────────
 // POST /api/auth/register
 // Admin only — creates a new shopkeeper account and initialises key records
-// Body: { name, email, password, phone, shopName, role? }
+// Body: { name, email, password, phone, shopName, role?, referredByPhone? }
 // ─────────────────────────────────────────────
 router.post('/register', async (req, res) => {
     try {
-        const { name, email, password, phone, shopName, role } = req.body;
+        const { name, email, password, phone, shopName, role, referredByPhone } = req.body;
 
         if (!name || !email || !password) {
             return res.status(400).json({ success: false, message: 'name, email and password are required' });
@@ -84,26 +84,29 @@ router.post('/register', async (req, res) => {
             password,
             phone,
             shopName,
-            role: role || 'shopkeeper'
+            role: role || 'shopkeeper',
+            referredByPhone: referredByPhone || null
         });
         await shopkeeper.save();
 
         // Initialise key records for both platforms
+        // NEW ACCOUNT GETS 5 FREE KEYS
         await Key.insertMany([
-            { shopkeeper: shopkeeper._id, platform: 'android', totalKeys: 0, usedKeys: 0 },
+            { shopkeeper: shopkeeper._id, platform: 'android', totalKeys: 5, usedKeys: 0 },
             { shopkeeper: shopkeeper._id, platform: 'ios', totalKeys: 0, usedKeys: 0 }
         ]);
 
         res.status(201).json({
             success: true,
-            message: 'Shopkeeper registered successfully',
+            message: 'Shopkeeper registered successfully with 5 Free Keys!',
             shopkeeper: {
                 id: shopkeeper._id,
                 name: shopkeeper.name,
                 email: shopkeeper.email,
                 phone: shopkeeper.phone,
                 shopName: shopkeeper.shopName,
-                role: shopkeeper.role
+                role: shopkeeper.role,
+                referredByPhone: shopkeeper.referredByPhone
             }
         });
     } catch (err) {

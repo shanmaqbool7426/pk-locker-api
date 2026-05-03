@@ -8,6 +8,7 @@ const shopkeeperSchema = new mongoose.Schema({
     phone: { type: String },
     shopName: { type: String },
     fcmToken: { type: String, default: null },
+    referredByPhone: { type: String, default: null },
 
 
     // Role: 'admin' can see all devices & all shopkeepers
