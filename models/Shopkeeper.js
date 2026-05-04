@@ -9,6 +9,7 @@ const shopkeeperSchema = new mongoose.Schema({
     shopName: { type: String },
     fcmToken: { type: String, default: null },
     referredByPhone: { type: String, default: null },
+    referralRewardClaimed: { type: Boolean, default: false }, // Has the referrer been rewarded for this signup?
 
 
     // Role: 'admin' can see all devices & all shopkeepers

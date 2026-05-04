@@ -42,7 +42,7 @@ app.use('/apk', express.static(path.join(__dirname, 'public/apk')));
 
 // ── Middleware ───────────────────────────────
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // 10 mb to allow base64 profile pictures
+app.use(express.json({ limit: '50mb' })); // Increased to 50mb for multiple base64 images
 app.use(express.urlencoded({ extended: true }));
 
 // ── Routes ───────────────────────────────────

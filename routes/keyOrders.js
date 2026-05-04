@@ -3,8 +3,15 @@ const router = express.Router();
 const KeyOrder = require('../models/KeyOrder');
 const Key = require('../models/Key');
 const { protect, adminOnly } = require('../middleware/auth');
+const { allocateKeysToShopkeeper } = require('../utils/keyHelper');
 
-const UNIT_PRICE = 300;
+// Dynamic Pricing: More keys = Lower price per key
+const getDynamicPrice = (numKeys) => {
+    const count = parseInt(numKeys);
+    if (count >= 50) return 200; // Wholesale Tier
+    if (count >= 10) return 250; // Dealer Tier
+    return 300;                  // Retail Tier
+};
 
 // POST /api/key-orders/wallet-pay
 // SIMULATES direct wallet deduction (EasyPaisa/JazzCash STK Push)
@@ -16,7 +23,8 @@ router.post('/wallet-pay', protect, async (req, res) => {
             return res.status(400).json({ success: false, message: 'Missing required fields' });
         }
 
-        const totalAmount = numKeys * UNIT_PRICE;
+        const unitPrice = getDynamicPrice(numKeys);
+        const totalAmount = numKeys * unitPrice;
 
         // Simulate network/PIN processing delay
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -26,7 +34,7 @@ router.post('/wallet-pay', protect, async (req, res) => {
             shopkeeper: req.user._id,
             platform: platform || 'android',
             numKeys,
-            unitPrice: UNIT_PRICE,
+            unitPrice: unitPrice,
             totalAmount,
             paymentProofImage: `DIRECT_WALLET_${method.toUpperCase()}_${mobileNumber}`,
             status: 'Approved'
@@ -54,17 +62,7 @@ router.post('/wallet-pay', protect, async (req, res) => {
     }
 });
 
-// Helper function to allocate keys
-const allocateKeysToShopkeeper = async (shopkeeperId, numKeys, platform) => {
-    let keyRecord = await Key.findOne({ shopkeeper: shopkeeperId, platform: platform });
-    if (!keyRecord) {
-        keyRecord = new Key({ shopkeeper: shopkeeperId, platform: platform, totalKeys: 0, usedKeys: 0 });
-    }
-    keyRecord.totalKeys += parseInt(numKeys);
-    keyRecord.updatedAt = new Date();
-    await keyRecord.save();
-    return keyRecord;
-};
+
 
 // POST /api/key-orders/checkout-safepay
 // Step 1: Initialize payment with Safepay
@@ -72,8 +70,8 @@ router.post('/checkout-safepay', protect, async (req, res) => {
     try {
         const { numKeys, platform } = req.body;
         if (!numKeys) return res.status(400).json({ success: false, message: 'Number of keys required' });
-
-        const totalAmount = numKeys * UNIT_PRICE;
+        const unitPrice = getDynamicPrice(numKeys);
+        const totalAmount = numKeys * unitPrice;
 
         // Safepay configuration from .env
         const apiKey = process.env.SAFEPAY_API_KEY;
@@ -126,7 +124,7 @@ router.post('/checkout-safepay', protect, async (req, res) => {
             shopkeeper: req.user._id,
             platform: platform || 'android',
             numKeys,
-            unitPrice: UNIT_PRICE,
+            unitPrice: unitPrice,
             totalAmount,
             paymentProofImage: `SAFEPAY_PENDING_${trackerToken}`,
             status: 'Pending',
@@ -242,6 +240,42 @@ router.post('/verify-safepay', protect, async (req, res) => {
     } catch (err) {
         console.error('Safepay verification error:', err);
         res.status(500).json({ success: false, message: 'Verification failed' });
+    }
+});
+
+// POST /api/key-orders/request
+// Manual request for keys with screenshot proof
+router.post('/request', protect, async (req, res) => {
+    try {
+        const { numKeys, paymentProofImage, platform } = req.body;
+
+        if (!numKeys || !paymentProofImage) {
+            return res.status(400).json({ success: false, message: 'Number of keys and payment proof required' });
+        }
+
+        const unitPrice = getDynamicPrice(numKeys);
+        const totalAmount = numKeys * unitPrice;
+
+        const order = new KeyOrder({
+            shopkeeper: req.user._id,
+            platform: platform || 'android',
+            numKeys,
+            unitPrice,
+            totalAmount,
+            paymentProofImage,
+            status: 'Pending'
+        });
+
+        await order.save();
+
+        res.status(201).json({
+            success: true,
+            message: 'Order submitted! Please wait for administrative approval.',
+            orderId: order._id
+        });
+    } catch (err) {
+        console.error('Key request error:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 

@@ -4,7 +4,9 @@ const Shopkeeper = require('../models/Shopkeeper');
 const Device = require('../models/Device');
 const EmiPayment = require('../models/EmiPayment');
 const Key = require('../models/Key');
+const KeyOrder = require('../models/KeyOrder');
 const { protect, adminOnly } = require('../middleware/auth');
+const { allocateKeysToShopkeeper } = require('../utils/keyHelper');
 
 // All routes require admin authentication
 router.use(protect, adminOnly);
@@ -345,6 +347,65 @@ router.post('/trigger-emi-reminders', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ success: false, message: 'Server error while triggering EMI reminders' });
+    }
+});
+ 
+// ══════════════════════════════════════════════
+//  KEY ORDER MANAGEMENT (Manual Approval)
+// ══════════════════════════════════════════════
+ 
+// GET /api/admin/key-orders
+// List all key orders (can filter by status)
+router.get('/key-orders', async (req, res) => {
+    try {
+        const { status } = req.query;
+        const query = status ? { status } : {};
+        const orders = await KeyOrder.find(query)
+            .populate('shopkeeper', 'name email shopName phone')
+            .sort({ createdAt: -1 });
+        res.json({ success: true, count: orders.length, data: orders });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+ 
+// POST /api/admin/key-orders/:id/approve
+// Approves a manual order (e.g. after WhatsApp payment verification)
+router.post('/key-orders/:id/approve', async (req, res) => {
+    try {
+        const order = await KeyOrder.findById(req.params.id);
+        if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+        if (order.status !== 'Pending') return res.status(400).json({ success: false, message: 'Order is already ' + order.status });
+ 
+        order.status = 'Approved';
+        order.updatedAt = new Date();
+        await order.save();
+ 
+        // Allocate keys to shopkeeper
+        await allocateKeysToShopkeeper(order.shopkeeper, order.numKeys, order.platform);
+ 
+        res.json({ success: true, message: 'Order approved and keys allocated' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+ 
+// POST /api/admin/key-orders/:id/reject
+router.post('/key-orders/:id/reject', async (req, res) => {
+    try {
+        const { notes } = req.body;
+        const order = await KeyOrder.findById(req.params.id);
+        if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+ 
+        order.status = 'Rejected';
+        if (notes) order.adminNotes = notes;
+        order.updatedAt = new Date();
+        await order.save();
+ 
+        res.json({ success: true, message: 'Order rejected' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error' });
     }
 });
 

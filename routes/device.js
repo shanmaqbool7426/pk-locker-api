@@ -7,6 +7,7 @@ const EmiPayment = require('../models/EmiPayment');
 const Key = require('../models/Key');
 const Shopkeeper = require('../models/Shopkeeper');
 const { protect, adminOnly } = require('../middleware/auth');
+const { uploadImage } = require('../utils/imagekit');
 
 // ─────────────────────────────────────────────
 // Helper: send FCM message (silent data push)
@@ -74,7 +75,7 @@ router.post('/register', protect, async (req, res) => {
     try {
         const {
             imei, imei2, brand, model, androidVersion, platform,
-            customerName, cnic, phoneNumber, profilePicture,
+            customerName, cnic, phoneNumber, profilePicture, cnicProofImage,
             productName, totalPrice, downPayment, balance,
             emiTenure, emiStartDate, emiAmount,
             guarantor
@@ -108,21 +109,40 @@ router.post('/register', protect, async (req, res) => {
         // Generate SMS codes
         const smsCodes = generateSmsCodes(imei);
 
-        // Parse emiTenure as integer
         const tenure = parseInt(emiTenure) || 1;
         const startDate = emiStartDate ? new Date(emiStartDate) : new Date();
         const emiAmountCalc = emiAmount || (balance && tenure ? parseFloat((balance / tenure).toFixed(5)) : 0);
+
+        // --- Handle Image Uploads via ImageKit ---
+        let profileUrl = profilePicture;
+        let cnicUrl = cnicProofImage;
+        let guarantorCnicUrl = guarantor ? guarantor.cnicProofImage : null;
+
+        if (profilePicture && profilePicture.length > 500) {
+            profileUrl = await uploadImage(profilePicture, `profile_${imei}`, 'profiles');
+        }
+        if (cnicProofImage && cnicProofImage.length > 500) {
+            cnicUrl = await uploadImage(cnicProofImage, `cnic_${imei}`, 'cnic_proofs');
+        }
+        if (guarantor && guarantor.cnicProofImage && guarantor.cnicProofImage.length > 500) {
+            guarantorCnicUrl = await uploadImage(guarantor.cnicProofImage, `guarantor_${imei}`, 'guarantor_proofs');
+        }
 
 
         const device = new Device({
             imei, imei2, brand, model, androidVersion,
             platform: devicePlatform,
-            customerName, cnic, phoneNumber, profilePicture,
+            customerName, cnic, phoneNumber, 
+            profilePicture: profileUrl,
+            cnicProofImage: cnicUrl,
             productName, totalPrice, downPayment, balance,
             emiTenure: tenure,
             emiStartDate: startDate,
             emiAmount: emiAmountCalc,
-            guarantor,
+            guarantor: guarantor ? {
+                ...guarantor,
+                cnicProofImage: guarantorCnicUrl
+            } : undefined,
             smsCodes,
             status: 'Unlocked',
             shopkeeper: req.user._id
@@ -209,7 +229,7 @@ router.get('/', protect, async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture status balance emiTenure emiAmount emiStartDate registeredAt smsCodes controls appRestrictions location geofence locationHistory')
+            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor registeredAt smsCodes controls appRestrictions location geofence locationHistory')
             .sort({ registeredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
@@ -236,7 +256,7 @@ router.get('/deregistered', protect, async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture status deregisteredAt registeredAt smsCodes controls appRestrictions location geofence locationHistory')
+            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor status deregisteredAt registeredAt smsCodes controls appRestrictions location geofence locationHistory')
             .sort({ deregisteredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
