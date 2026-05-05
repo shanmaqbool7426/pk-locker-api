@@ -15,17 +15,17 @@ const generateToken = (id) => {
 
 // ─────────────────────────────────────────────
 // POST /api/auth/login
-// Body: { email, password }
+// Body: { phone, password }
 // ─────────────────────────────────────────────
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { phone, password } = req.body;
 
-        if (!email || !password) {
-            return res.status(400).json({ success: false, message: 'Email and password are required' });
+        if (!phone || !password) {
+            return res.status(400).json({ success: false, message: 'Phone and password are required' });
         }
 
-        const shopkeeper = await Shopkeeper.findOne({ email: email.toLowerCase().trim() });
+        const shopkeeper = await Shopkeeper.findOne({ phone: phone.trim() });
         if (!shopkeeper) {
             return res.status(401).json({ success: false, message: 'Invalid credentials' });
         }
@@ -65,17 +65,22 @@ router.post('/login', async (req, res) => {
 // Admin only — creates a new shopkeeper account and initialises key records
 // Body: { name, email, password, phone, shopName, role?, referredByPhone? }
 // ─────────────────────────────────────────────
-router.post('/register', async (req, res) => {
+router.post('/register', protect, adminOnly, async (req, res) => {
     try {
         const { name, email, password, phone, shopName, role, referredByPhone } = req.body;
 
-        if (!name || !email || !password) {
-            return res.status(400).json({ success: false, message: 'name, email and password are required' });
+        if (!name || !phone || !password || !email) {
+            return res.status(400).json({ success: false, message: 'name, email, phone and password are required' });
         }
 
-        const existing = await Shopkeeper.findOne({ email: email.toLowerCase().trim() });
-        if (existing) {
+        const existingEmail = await Shopkeeper.findOne({ email: email.toLowerCase().trim() });
+        if (existingEmail) {
             return res.status(400).json({ success: false, message: 'Email already registered' });
+        }
+        
+        const existingPhone = await Shopkeeper.findOne({ phone: phone.trim() });
+        if (existingPhone) {
+            return res.status(400).json({ success: false, message: 'Phone already registered' });
         }
 
         const shopkeeper = new Shopkeeper({

@@ -9,23 +9,26 @@ const createAdmin = async () => {
         await mongoose.connect(process.env.MONGODB_URI);
         console.log('Connected to MongoDB.');
 
-        const email = 'shan@mailinator.com';
-        const password = 'password123';
+        const phone = '03069829158';
+        const email = 'admin@pklocker.com';
+        const password = 'Shan7426@';
 
         // Check if exists
-        const existing = await Shopkeeper.findOne({ email });
+        const existing = await Shopkeeper.findOne({ phone });
         if (existing) {
-            console.log('Admin already exists. Updating role to admin...');
+            console.log('Admin already exists. Updating role and password...');
             existing.role = 'admin';
+            existing.password = password; // this will trigger the pre-save hook to hash
             await existing.save();
             console.log('Admin updated successfully.');
         } else {
             const admin = new Shopkeeper({
-                name: 'Shan Maqbool',
+                name: 'Shan Maqbool (Admin)',
                 email: email,
+                phone: phone,
                 password: password,
                 role: 'admin',
-                shopName: 'PK locker HQ'
+                shopName: 'PK Locker HQ'
             });
             await admin.save();
             console.log('Admin account created successfully.');

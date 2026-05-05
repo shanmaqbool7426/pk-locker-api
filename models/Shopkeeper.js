@@ -5,7 +5,7 @@ const shopkeeperSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
-    phone: { type: String },
+    phone: { type: String, required: true, unique: true },
     shopName: { type: String },
     fcmToken: { type: String, default: null },
     referredByPhone: { type: String, default: null },
