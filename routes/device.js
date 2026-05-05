@@ -399,7 +399,7 @@ router.get('/:imei', protect, async (req, res) => {
         // Non-admins can only see their own devices
         if (req.user.role !== 'admin') query.shopkeeper = req.user._id;
 
-        const device = await Device.findOne(query).populate('shopkeeper', 'name email phone shopName');
+        const device = await Device.findOne(query).populate('shopkeeper', 'name phone shopName');
         if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
 
         // Fetch EMI summary

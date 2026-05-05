@@ -226,7 +226,7 @@ router.get('/history/:imei', protect, async (req, res) => {
         if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
 
         const history = await EmiPayment.find({ device: device._id, status: 'Paid' })
-            .populate('paidBy', 'name email')
+            .populate('paidBy', 'name phone')
             .sort({ paidDate: -1 });
 
         const totalPaid = history.reduce((sum, e) => sum + e.amount, 0);

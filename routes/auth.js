@@ -48,7 +48,6 @@ router.post('/login', async (req, res) => {
             shopkeeper: {
                 id: shopkeeper._id,
                 name: shopkeeper.name,
-                email: shopkeeper.email,
                 phone: shopkeeper.phone,
                 shopName: shopkeeper.shopName,
                 role: shopkeeper.role
@@ -63,19 +62,14 @@ router.post('/login', async (req, res) => {
 // ─────────────────────────────────────────────
 // POST /api/auth/register
 // Admin only — creates a new shopkeeper account and initialises key records
-// Body: { name, email, password, phone, shopName, role?, referredByPhone? }
+// Body: { name, password, phone, shopName, role?, referredByPhone? }
 // ─────────────────────────────────────────────
 router.post('/register', protect, adminOnly, async (req, res) => {
     try {
-        const { name, email, password, phone, shopName, role, referredByPhone } = req.body;
+        const { name, password, phone, shopName, role, referredByPhone } = req.body;
 
-        if (!name || !phone || !password || !email) {
-            return res.status(400).json({ success: false, message: 'name, email, phone and password are required' });
-        }
-
-        const existingEmail = await Shopkeeper.findOne({ email: email.toLowerCase().trim() });
-        if (existingEmail) {
-            return res.status(400).json({ success: false, message: 'Email already registered' });
+        if (!name || !phone || !password) {
+            return res.status(400).json({ success: false, message: 'name, phone and password are required' });
         }
         
         const existingPhone = await Shopkeeper.findOne({ phone: phone.trim() });
@@ -85,7 +79,6 @@ router.post('/register', protect, adminOnly, async (req, res) => {
 
         const shopkeeper = new Shopkeeper({
             name,
-            email,
             password,
             phone,
             shopName,
@@ -107,7 +100,6 @@ router.post('/register', protect, adminOnly, async (req, res) => {
             shopkeeper: {
                 id: shopkeeper._id,
                 name: shopkeeper.name,
-                email: shopkeeper.email,
                 phone: shopkeeper.phone,
                 shopName: shopkeeper.shopName,
                 role: shopkeeper.role,
@@ -148,7 +140,6 @@ router.get('/me', protect, async (req, res) => {
             shopkeeper: {
                 id: shopkeeper._id,
                 name: shopkeeper.name,
-                email: shopkeeper.email,
                 phone: shopkeeper.phone,
                 shopName: shopkeeper.shopName,
                 role: shopkeeper.role,

@@ -24,7 +24,7 @@ router.get('/shopkeepers', async (req, res) => {
 
         if (search) {
             const regex = new RegExp(search, 'i');
-            query.$or = [{ name: regex }, { email: regex }, { shopName: regex }, { phone: regex }];
+            query.$or = [{ name: regex }, { shopName: regex }, { phone: regex }];
         }
         if (isActive !== undefined) query.isActive = isActive === 'true';
 
@@ -61,18 +61,18 @@ router.get('/shopkeepers', async (req, res) => {
 // Create a new shopkeeper account and initialise key records
 router.post('/shopkeepers', async (req, res) => {
     try {
-        const { name, email, password, phone, shopName, role } = req.body;
+        const { name, password, phone, shopName, role } = req.body;
 
-        if (!name || !email || !password) {
-            return res.status(400).json({ success: false, message: 'name, email and password are required' });
+        if (!name || !phone || !password) {
+            return res.status(400).json({ success: false, message: 'name, phone and password are required' });
         }
 
-        const existing = await Shopkeeper.findOne({ email: email.toLowerCase().trim() });
+        const existing = await Shopkeeper.findOne({ phone: phone.trim() });
         if (existing) {
-            return res.status(400).json({ success: false, message: 'Email already registered' });
+            return res.status(400).json({ success: false, message: 'Phone already registered' });
         }
 
-        const shopkeeper = new Shopkeeper({ name, email, password, phone, shopName, role: role || 'shopkeeper' });
+        const shopkeeper = new Shopkeeper({ name, password, phone, shopName, role: role || 'shopkeeper' });
         await shopkeeper.save();
 
         // Initialise key records
@@ -84,7 +84,7 @@ router.post('/shopkeepers', async (req, res) => {
         res.status(201).json({
             success: true,
             message: 'Shopkeeper created successfully',
-            data: { id: shopkeeper._id, name: shopkeeper.name, email: shopkeeper.email, role: shopkeeper.role }
+            data: { id: shopkeeper._id, name: shopkeeper.name, phone: shopkeeper.phone, role: shopkeeper.role }
         });
     } catch (err) {
         console.error(err);
@@ -190,7 +190,7 @@ router.post('/keys/allocate', async (req, res) => {
 // List all key records with shopkeeper names
 router.get('/keys', async (req, res) => {
     try {
-        const keys = await Key.find({}).populate('shopkeeper', 'name email shopName');
+        const keys = await Key.find({}).populate('shopkeeper', 'name phone shopName');
         const data = keys.map(k => ({
             shopkeeper: k.shopkeeper,
             platform: k.platform,
@@ -233,7 +233,7 @@ router.get('/devices', async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .populate('shopkeeper', 'name email shopName')
+            .populate('shopkeeper', 'name phone shopName')
             .sort({ registeredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
@@ -361,7 +361,7 @@ router.get('/key-orders', async (req, res) => {
         const { status } = req.query;
         const query = status ? { status } : {};
         const orders = await KeyOrder.find(query)
-            .populate('shopkeeper', 'name email shopName phone')
+            .populate('shopkeeper', 'name shopName phone')
             .sort({ createdAt: -1 });
         res.json({ success: true, count: orders.length, data: orders });
     } catch (err) {

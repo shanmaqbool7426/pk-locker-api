@@ -10,7 +10,6 @@ const createAdmin = async () => {
         console.log('Connected to MongoDB.');
 
         const phone = '03069829158';
-        const email = 'admin@pklocker.com';
         const password = 'Shan7426@';
 
         // Check if exists
@@ -24,7 +23,6 @@ const createAdmin = async () => {
         } else {
             const admin = new Shopkeeper({
                 name: 'Shan Maqbool (Admin)',
-                email: email,
                 phone: phone,
                 password: password,
                 role: 'admin',
