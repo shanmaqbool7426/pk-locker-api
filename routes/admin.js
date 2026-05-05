@@ -323,11 +323,11 @@ router.get('/stats', async (req, res) => {
 router.post('/trigger-emi-check', async (req, res) => {
     try {
         const { checkOverdueEmis } = require('../cron/emiEnforcer');
-        
+
         // Run asynchronously, don't wait for completion if it takes long, or await it.
         // It's safer to await it for a controlled response.
         await checkOverdueEmis();
-        
+
         res.json({ success: true, message: 'EMI compliance check executed successfully.' });
     } catch (err) {
         console.error(err);
@@ -340,20 +340,20 @@ router.post('/trigger-emi-check', async (req, res) => {
 router.post('/trigger-emi-reminders', async (req, res) => {
     try {
         const { checkUpcomingReminders } = require('../cron/emiReminders');
-        
+
         await checkUpcomingReminders();
-        
+
         res.json({ success: true, message: 'EMI Reminders check executed successfully.' });
     } catch (err) {
         console.error(err);
         res.status(500).json({ success: false, message: 'Server error while triggering EMI reminders' });
     }
 });
- 
+
 // ══════════════════════════════════════════════
 //  KEY ORDER MANAGEMENT (Manual Approval)
 // ══════════════════════════════════════════════
- 
+
 // GET /api/admin/key-orders
 // List all key orders (can filter by status)
 router.get('/key-orders', async (req, res) => {
@@ -368,7 +368,7 @@ router.get('/key-orders', async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
- 
+
 // POST /api/admin/key-orders/:id/approve
 // Approves a manual order (e.g. after WhatsApp payment verification)
 router.post('/key-orders/:id/approve', async (req, res) => {
@@ -376,33 +376,33 @@ router.post('/key-orders/:id/approve', async (req, res) => {
         const order = await KeyOrder.findById(req.params.id);
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
         if (order.status !== 'Pending') return res.status(400).json({ success: false, message: 'Order is already ' + order.status });
- 
+
         order.status = 'Approved';
         order.updatedAt = new Date();
         await order.save();
- 
+
         // Allocate keys to shopkeeper
         await allocateKeysToShopkeeper(order.shopkeeper, order.numKeys, order.platform);
- 
+
         res.json({ success: true, message: 'Order approved and keys allocated' });
     } catch (err) {
         console.error(err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
- 
+
 // POST /api/admin/key-orders/:id/reject
 router.post('/key-orders/:id/reject', async (req, res) => {
     try {
         const { notes } = req.body;
         const order = await KeyOrder.findById(req.params.id);
         if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
- 
+
         order.status = 'Rejected';
         if (notes) order.adminNotes = notes;
         order.updatedAt = new Date();
         await order.save();
- 
+
         res.json({ success: true, message: 'Order rejected' });
     } catch (err) {
         res.status(500).json({ success: false, message: 'Server error' });
