@@ -229,7 +229,7 @@ router.get('/', protect, async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor registeredAt smsCodes controls appRestrictions location geofence locationHistory')
+            .select('status imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor registeredAt smsCodes controls appRestrictions location geofence locationHistory')
             .sort({ registeredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
