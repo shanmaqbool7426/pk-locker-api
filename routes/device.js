@@ -132,7 +132,7 @@ router.post('/register', protect, async (req, res) => {
         const device = new Device({
             imei, imei2, brand, model, androidVersion,
             platform: devicePlatform,
-            customerName, cnic, phoneNumber, 
+            customerName, cnic, phoneNumber,
             profilePicture: profileUrl,
             cnicProofImage: cnicUrl,
             productName, totalPrice, downPayment, balance,
@@ -288,7 +288,6 @@ router.get('/stats', protect, async (req, res) => {
         const [totalDevices, lockedDevices, deregisteredDevices] = await Promise.all([
             Device.countDocuments({ shopkeeper: shopkeeperId, isDeregistered: false }),
             Device.countDocuments({ shopkeeper: shopkeeperId, isDeregistered: false, status: 'Locked' }),
-            Device.countDocuments({ shopkeeper: shopkeeperId, isDeregistered: true })
         ]);
 
         res.json({
@@ -322,11 +321,13 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
         // 2. EMI Collection Rate (Ratio of Paid vs Total Due)
         const collectionStats = await EmiPayment.aggregate([
             { $match: { shopkeeper: shopkeeperId, dueDate: { $lte: now } } },
-            { $group: { 
-                _id: null, 
-                paid: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, 1, 0] } },
-                total: { $sum: 1 }
-            } }
+            {
+                $group: {
+                    _id: null,
+                    paid: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, 1, 0] } },
+                    total: { $sum: 1 }
+                }
+            }
         ]);
         const collectionRate = collectionStats.length > 0 ? (collectionStats[0].paid / collectionStats[0].total * 100).toFixed(1) : 0;
 
@@ -343,10 +344,12 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
         const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
         const overdueTrend = await EmiPayment.aggregate([
             { $match: { shopkeeper: shopkeeperId, status: 'Unpaid', dueDate: { $gte: sixMonthsAgo, $lte: now } } },
-            { $group: { 
-                _id: { month: { $month: '$dueDate' }, year: { $year: '$dueDate' } }, 
-                count: { $sum: 1 } 
-            } },
+            {
+                $group: {
+                    _id: { month: { $month: '$dueDate' }, year: { $year: '$dueDate' } },
+                    count: { $sum: 1 }
+                }
+            },
             { $sort: { '_id.year': 1, '_id.month': 1 } }
         ]);
 
@@ -391,6 +394,64 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
 //  SINGLE DEVICE
 // ══════════════════════════════════════════════
 
+// GET /api/devices/public/:imei
+// Public route for customer app to fetch its own status and shop details
+router.get('/public/:imei', async (req, res) => {
+    try {
+        const device = await Device.findOne({ imei: req.params.imei }).populate('shopkeeper', 'name phone shopName');
+        if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+
+        // Fetch EMI summary
+        const emis = await EmiPayment.find({ device: device._id }).sort({ installmentNumber: 1 });
+        const unpaidCount = emis.filter(e => e.status === 'Unpaid').length;
+        const paidCount = emis.filter(e => e.status === 'Paid').length;
+
+        // Find the next due EMI
+        const nextEmi = emis.find(e => e.status === 'Unpaid');
+
+        // Robust shopkeeper data extraction
+        const shopInfo = device.shopkeeper ? {
+            _id: device.shopkeeper._id,
+            name: device.shopkeeper.name,
+            phone: device.shopkeeper.phone,
+            shopName: device.shopkeeper.shopName || device.shopkeeper.name,
+            role: device.shopkeeper.role
+        } : {
+            name: 'Authorized Dealer',
+            phone: 'Contact Provider',
+            shopName: 'Authorized Dealer'
+        };
+
+        res.json({
+            success: true,
+            data: {
+                device: {
+                    imei: device.imei,
+                    status: device.status,
+                    customerName: device.customerName,
+                    emiAmount: device.emiAmount || 0,
+                    productName: device.productName,
+                    smsCodes: device.smsCodes,
+                    shopkeeper: shopInfo
+                },
+                emiSummary: {
+                    total: emis.length,
+                    paid: paidCount,
+                    unpaid: unpaidCount,
+                    nextEmi: nextEmi ? {
+                        amount: nextEmi.amount,
+                        dueDate: nextEmi.dueDate
+                    } : null
+                }
+            }
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+
 // GET /api/devices/:imei
 // Full device details (Action + Device Detail + Customer + EMI Detail tabs)
 router.get('/:imei', protect, async (req, res) => {
@@ -425,7 +486,6 @@ router.get('/:imei', protect, async (req, res) => {
     }
 });
 
-// PUT /api/devices/:imei
 // Update customer / device / EMI details
 // If EMI-related fields change, old unpaid schedule is deleted and re-generated
 router.put('/:imei', protect, async (req, res) => {
@@ -562,13 +622,8 @@ router.post('/:imei/deregister', protect, async (req, res) => {
             state: 'true'
         });
 
-        // Release the key back
-        const keyRecord = await Key.findOne({ shopkeeper: device.shopkeeper, platform: device.platform });
-        if (keyRecord && keyRecord.usedKeys > 0) {
-            keyRecord.usedKeys -= 1;
-            keyRecord.updatedAt = new Date();
-            await keyRecord.save();
-        }
+        // Key is NOT released back to the shopkeeper upon deregistration.
+        // It stays marked as used.
 
         res.json({ success: true, message: 'Device deregistered successfully' });
     } catch (err) {
@@ -606,7 +661,7 @@ router.post('/:imei/controls', protect, async (req, res) => {
         // 0. SPECIAL: Geofence Update
         if (action === 'geofence_update') {
             const currentGeofence = device.geofence || {};
-            
+
             device.geofence = {
                 isEnabled: !!state.isEnabled,
                 lat: state.lat !== undefined ? state.lat : currentGeofence.lat,
@@ -614,9 +669,9 @@ router.post('/:imei/controls', protect, async (req, res) => {
                 radius: state.radius !== undefined ? Number(state.radius) : (currentGeofence.radius || 5),
                 lastBreachAt: currentGeofence.lastBreachAt || null
             };
-            
+
             console.log(`[Geofence Update] Final Model: ${JSON.stringify(device.geofence)}`);
-            
+
             device.markModified('geofence');
             await device.save();
             return res.json({ success: true, message: 'Geofence protocol updated successfully' });
@@ -663,7 +718,7 @@ router.post('/:imei/controls', protect, async (req, res) => {
         else if (action === 'manual_notification') {
             const { title, body } = state;
             console.log(`[Manual Notification] Sending to: ${device.customerName}, Title: ${title}`);
-            
+
             if (device.fcmToken) {
                 await admin.messaging().send({
                     token: device.fcmToken,
@@ -770,8 +825,8 @@ const getDistance = (lat1, lon1, lat2, lon2) => {
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
 };
@@ -801,10 +856,10 @@ router.post('/:imei/location', async (req, res) => {
         // 4. Geofencing Check
         if (device.geofence.isEnabled && device.geofence.lat && device.geofence.lng) {
             const distance = getDistance(lat, lng, device.geofence.lat, device.geofence.lng);
-            
+
             if (distance > device.geofence.radius) {
                 console.warn(`[GEOFENCE] BREACH: Device ${imei} is ${distance.toFixed(2)}km away from center.`);
-                
+
                 // Only alert if last breach was more than 1 hour ago (debounce)
                 const lastBreach = device.geofence.lastBreachAt;
                 if (!lastBreach || (now - lastBreach > 3600000)) {
@@ -870,7 +925,7 @@ router.get('/:imei/location-history', protect, async (req, res) => {
 router.post('/update-token', async (req, res) => {
     try {
         const { imei, fcmToken, isShopkeeper } = req.body;
-        
+
         if (isShopkeeper) {
             // If the user is logged in, use their ID from the request or provide it in body if unauth (risky)
             // Better to use protect middleware for shopkeeper token updates
@@ -936,7 +991,7 @@ router.post('/:imei/sim-changed', async (req, res) => {
         if (device.controls.autoLockOnSimChange) {
             device.status = 'Locked';
             lockApplied = true;
-            
+
             // Send FCM to device to enforce lock
             await sendFCM(device.fcmToken, {
                 type: 'CONTROL',
@@ -966,10 +1021,10 @@ router.post('/:imei/sim-changed', async (req, res) => {
             console.log(`[SIM Change] Notification sent to shopkeeper: ${device.shopkeeper.name}`);
         }
 
-        res.json({ 
-            success: true, 
-            message: 'SIM change recorded', 
-            autoLocked: lockApplied 
+        res.json({
+            success: true,
+            message: 'SIM change recorded',
+            autoLocked: lockApplied
         });
 
     } catch (err) {
