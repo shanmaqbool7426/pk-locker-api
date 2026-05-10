@@ -36,7 +36,7 @@ const app = express();
 const path = require('path');
 app.use('/dl', express.static(path.join(__dirname, 'public/apk')));
 // Backward/forward compatible alias:
-// The Android app QR screen expects `/apk/v6_app.apk` (not `/dl/v6_app.apk`).
+// The Android app QR screen expects `/apk/v7_app.apk` (not `/dl/v7_app.apk`).
 // Serving both paths avoids "downloaded wrong file" provisioning errors.
 app.use('/apk', express.static(path.join(__dirname, 'public/apk')));
 
@@ -57,6 +57,18 @@ app.use('/api/devices', deviceRoutes);
 app.use('/api/emis', emiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/key-orders', keyOrderRoutes);
+
+// ── Auto-Update Route ────────────────────────
+app.get('/api/version', (req, res) => {
+    // Jab bhi app update karni ho, versionCode aur downloadUrl yahan badal dein
+    res.json({
+        success: true,
+        versionCode: 7, // Jab update push karna ho, is number ko barha dein
+        versionName: "v7.0",
+        downloadUrl: "https://pk-locker-api.vercel.app/apk/update.apk",
+        forceUpdate: true
+    });
+});
 
 // ── Root Route for Vercel ────────────────────
 app.get('/', (req, res) => {
