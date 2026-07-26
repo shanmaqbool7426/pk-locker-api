@@ -41,3 +41,5 @@ serviceAccountKey.json.json
 serviceAccountKey.json.json
 *.json
 .env
+temp_auto_push.bat
+temp_interactive_push.bat
