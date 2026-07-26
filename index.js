@@ -58,15 +58,16 @@ app.use('/api/emis', emiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/key-orders', keyOrderRoutes);
 
-// ── Auto-Update Route ────────────────────────
+// ── Auto-Update Route (Disabled by default - uncomment when pushing new version) ──
 app.get('/api/version', (req, res) => {
-    // Jab bhi app update karni ho, versionCode aur downloadUrl yahan badal dein
+    // Jab app update karni ho, tab versionCode app se zyada rakhein aur success: true karein
     res.json({
-        success: true,
-        versionCode: 7, // Jab update push karna ho, is number ko barha dein
-        versionName: "v7.0",
+        success: false,
+        message: "No mandatory update available",
+        versionCode: 3,
+        versionName: "v1.2",
         downloadUrl: "https://pk-locker-api.vercel.app/apk/update.apk",
-        forceUpdate: true
+        forceUpdate: false
     });
 });
 
