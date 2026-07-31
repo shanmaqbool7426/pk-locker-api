@@ -93,10 +93,93 @@ app.get('/health', (req, res) => {
     res.json({ status: 'okk', timestamp: new Date().toISOString() });
 });
 
+// ── ADB PROXY ENDPOINTS (Local PC Relay) ─────
+// These endpoints let the shopkeeper app run ADB commands on the
+// customer device via the PC (where both phones are connected via Wireless ADB).
+const { execFile } = require('child_process');
+const ADB_PATH = process.env.ADB_PATH || 'adb'; // set ADB_PATH in .env if needed
+
+function runAdb(args, timeoutMs = 15000) {
+    return new Promise((resolve) => {
+        execFile(ADB_PATH, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
+            if (err) {
+                resolve({ success: false, output: stderr || err.message });
+            } else {
+                resolve({ success: true, output: stdout.trim() });
+            }
+        });
+    });
+}
+
+// GET /api/adb/devices  — list all connected ADB devices
+app.get('/api/adb/devices', async (req, res) => {
+    const result = await runAdb(['devices', '-l']);
+    const lines = result.output.split('\n').filter(l => l.includes('\t'));
+    const devices = lines.map(l => {
+        const parts = l.trim().split(/\s+/);
+        return { id: parts[0], status: parts[1], info: parts.slice(2).join(' ') };
+    });
+    res.json({ success: true, devices, raw: result.output });
+});
+
+// POST /api/adb/exec  — run shell command on a specific device
+// Body: { deviceId: "adb-xxxxx._adb-tls-connect._tcp", command: "dpm set-device-owner ..." }
+app.post('/api/adb/exec', async (req, res) => {
+    const { deviceId, command } = req.body;
+    if (!deviceId || !command) {
+        return res.status(400).json({ success: false, message: 'deviceId and command are required' });
+    }
+    console.log(`[ADB PROXY] Device: ${deviceId} | Command: ${command}`);
+    const result = await runAdb(['-s', deviceId, 'shell', command], 20000);
+    res.json({ success: result.success, output: result.output });
+});
+
+// POST /api/adb/setup-device-owner
+// Full automated setup: set Device Owner + grant all permissions
+// Body: { deviceId: "adb-xxxxx._adb-tls-connect._tcp" }
+app.post('/api/adb/setup-device-owner', async (req, res) => {
+    const { deviceId } = req.body;
+    if (!deviceId) {
+        return res.status(400).json({ success: false, message: 'deviceId is required' });
+    }
+
+    const logs = [];
+    const run = async (cmd) => {
+        const r = await runAdb(['-s', deviceId, 'shell', cmd], 20000);
+        logs.push(`CMD: ${cmd}\nRESULT: ${r.output}`);
+        return r;
+    };
+
+    logs.push(`Starting full Device Owner setup on: ${deviceId}`);
+
+    // 1. Set Device Owner
+    const r1 = await run('dpm set-device-owner com.pksafe.lock.manager/com.pksafe.lock.manager.receiver.AdminReceiver');
+    logs.push(`Device Owner: ${r1.success ? '✅ SUCCESS' : '❌ FAILED'}`);
+
+    // 2. Grant Overlay
+    await run('appops set com.pksafe.lock.manager SYSTEM_ALERT_WINDOW allow');
+    logs.push('Overlay Permission: ✅ Granted');
+
+    // 3. Enable Accessibility (Anti-Uninstall Guard)
+    await run('settings put secure enabled_accessibility_services com.pksafe.lock.manager/com.pksafe.lock.manager.service.AntiUninstallService');
+    await run('settings put secure accessibility_enabled 1');
+    logs.push('Accessibility Guard: ✅ Enabled');
+
+    // 4. Grant SMS & Location
+    await run('pm grant com.pksafe.lock.manager android.permission.RECEIVE_SMS');
+    await run('pm grant com.pksafe.lock.manager android.permission.READ_SMS');
+    await run('pm grant com.pksafe.lock.manager android.permission.ACCESS_FINE_LOCATION');
+    logs.push('SMS & Location Permissions: ✅ Granted');
+
+    logs.push('🎉 Full Setup Complete!');
+    res.json({ success: r1.success, logs });
+});
+
 // ── 404 handler ──────────────────────────────
 app.use((req, res) => {
     res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found` });
 });
+
 
 // ── Global error handler ─────────────────────
 app.use((err, req, res, next) => {
