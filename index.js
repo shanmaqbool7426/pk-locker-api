@@ -136,14 +136,24 @@ app.post('/api/adb/exec', async (req, res) => {
 
 // POST /api/adb/setup-device-owner
 // Full automated setup: set Device Owner + grant all permissions
-// Body: { deviceId: "adb-xxxxx._adb-tls-connect._tcp" }
+// Body: { deviceId?: "...", targetIp?: "192.168.1.37:5555" }
 app.post('/api/adb/setup-device-owner', async (req, res) => {
-    const { deviceId } = req.body;
-    if (!deviceId) {
-        return res.status(400).json({ success: false, message: 'deviceId is required' });
+    let { deviceId, targetIp } = req.body;
+    
+    if (!deviceId && !targetIp) {
+        return res.status(400).json({ success: false, message: 'deviceId or targetIp is required' });
     }
 
     const logs = [];
+    
+    if (targetIp) {
+        if (!targetIp.includes(':')) targetIp = `${targetIp}:5555`;
+        logs.push(`Connecting ADB to ${targetIp}...`);
+        const connRes = await runAdb(['connect', targetIp], 10000);
+        logs.push(`Connect Output: ${connRes.output}`);
+        deviceId = targetIp;
+    }
+
     const run = async (cmd) => {
         const r = await runAdb(['-s', deviceId, 'shell', cmd], 20000);
         logs.push(`CMD: ${cmd}\nRESULT: ${r.output}`);
@@ -169,7 +179,8 @@ app.post('/api/adb/setup-device-owner', async (req, res) => {
     await run('pm grant com.pksafe.lock.manager android.permission.RECEIVE_SMS');
     await run('pm grant com.pksafe.lock.manager android.permission.READ_SMS');
     await run('pm grant com.pksafe.lock.manager android.permission.ACCESS_FINE_LOCATION');
-    logs.push('SMS & Location Permissions: ✅ Granted');
+    await run('pm grant com.pksafe.lock.manager android.permission.READ_PHONE_STATE');
+    logs.push('SMS, Location & Phone Permissions: ✅ Granted');
 
     logs.push('🎉 Full Setup Complete!');
     res.json({ success: r1.success, logs });
