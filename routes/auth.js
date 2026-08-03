@@ -19,6 +19,7 @@ const generateToken = (id) => {
 // ─────────────────────────────────────────────
 router.post('/login', async (req, res) => {
     try {
+        console.log('[LOGIN] Request received:', { phone: req.body.phone });
         const { phone, password } = req.body;
 
         if (!phone || !password) {
