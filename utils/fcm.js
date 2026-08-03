@@ -21,4 +21,5 @@ const sendFCM = async (fcmToken, data) => {
     }
 };
 
+
 module.exports = { sendFCM };
