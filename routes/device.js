@@ -24,7 +24,8 @@ const sendFCM = async (fcmToken, data) => {
             data,
             token: fcmToken,
             android: {
-                priority: 'high'
+                priority: 'high',
+                ttl: 3600000 // 1 hour TTL: ensures delivery even if device is momentarily offline
             }
         });
         console.log(`[FCM] Success: Message sent (ID: ${response})`);
@@ -191,6 +192,9 @@ router.post('/register', protect, async (req, res) => {
                         type: 'NEW_REGISTRATION',
                         imei: device.imei,
                         customerName: device.customerName
+                    },
+                    android: {
+                        priority: 'high'
                     }
                 });
                 console.log(`[NOTIFY] Shopkeeper notified of new registration: ${imei}`);
@@ -729,6 +733,9 @@ router.post('/:imei/controls', protect, async (req, res) => {
                     data: {
                         type: 'MANUAL_ALERT',
                         imei: device.imei
+                    },
+                    android: {
+                        priority: 'high'
                     }
                 });
             }
@@ -882,6 +889,9 @@ router.post('/:imei/location', async (req, res) => {
                                     type: 'GEOFENCE_ALERT',
                                     imei: device.imei,
                                     distance: distance.toFixed(2)
+                                },
+                                android: {
+                                    priority: 'high'
                                 }
                             });
                         } catch (err) { console.error('FCM Error (Geofence):', err.message); }
@@ -1016,6 +1026,9 @@ router.post('/:imei/sim-changed', async (req, res) => {
                     imei: device.imei,
                     customerName: device.customerName,
                     newIccid: iccid || 'Unknown'
+                },
+                android: {
+                    priority: 'high'
                 }
             });
             console.log(`[SIM Change] Notification sent to shopkeeper: ${device.shopkeeper.name}`);
