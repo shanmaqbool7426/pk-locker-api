@@ -4,6 +4,7 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 require('dotenv').config();
 
+
 // ── Firebase Admin Init ──────────────────────
 // ── Firebase Admin Init ──────────────────────
 try {
@@ -139,13 +140,13 @@ app.post('/api/adb/exec', async (req, res) => {
 // Body: { deviceId?: "...", targetIp?: "192.168.1.37:5555" }
 app.post('/api/adb/setup-device-owner', async (req, res) => {
     let { deviceId, targetIp } = req.body;
-    
+
     if (!deviceId && !targetIp) {
         return res.status(400).json({ success: false, message: 'deviceId or targetIp is required' });
     }
 
     const logs = [];
-    
+
     if (targetIp) {
         if (!targetIp.includes(':')) targetIp = `${targetIp}:5555`;
         logs.push(`Connecting ADB to ${targetIp}...`);
