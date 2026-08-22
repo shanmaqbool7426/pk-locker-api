@@ -41,7 +41,7 @@ router.get('/upcoming', protect, async (req, res) => {
 
         const emis = await EmiPayment.find({
             shopkeeper: req.user._id,
-            status: 'Unpaid',
+            status: { $in: ['Unpaid', 'Partial'] },
             dueDate: { $lte: future }
         })
             .populate({
@@ -60,6 +60,8 @@ router.get('/upcoming', protect, async (req, res) => {
             totalLoanAmount: e.device ? e.device.totalPrice : 0,
             emiDate: e.dueDate,
             emiAmount: e.amount,
+            paidAmount: e.paidAmount || 0,
+            remaining: e.amount - (e.paidAmount || 0),
             installmentNumber: e.installmentNumber,
             status: e.status,
             platform: e.device ? e.device.platform : 'android'
@@ -86,8 +88,9 @@ router.get('/device/:imei', protect, async (req, res) => {
 
         const emis = await EmiPayment.find({ device: device._id }).sort({ installmentNumber: 1 });
 
-        const paidTotal = emis.filter(e => e.status === 'Paid').reduce((sum, e) => sum + e.amount, 0);
-        const unpaidTotal = emis.filter(e => e.status === 'Unpaid').reduce((sum, e) => sum + e.amount, 0);
+        const paidTotal = emis.filter(e => e.status === 'Paid' || e.status === 'Partial').reduce((sum, e) => sum + e.paidAmount, 0);
+        const unpaidTotal = emis.filter(e => e.status === 'Unpaid').reduce((sum, e) => sum + e.amount, 0)
+            + emis.filter(e => e.status === 'Partial').reduce((sum, e) => sum + (e.amount - e.paidAmount), 0);
 
         res.json({
             success: true,
@@ -103,6 +106,7 @@ router.get('/device/:imei', protect, async (req, res) => {
                 summary: {
                     total: emis.length,
                     paid: emis.filter(e => e.status === 'Paid').length,
+                    partial: emis.filter(e => e.status === 'Partial').length,
                     unpaid: emis.filter(e => e.status === 'Unpaid').length,
                     paidTotal: parseFloat(paidTotal.toFixed(2)),
                     unpaidTotal: parseFloat(unpaidTotal.toFixed(2))
@@ -118,7 +122,10 @@ router.get('/device/:imei', protect, async (req, res) => {
 
 // ══════════════════════════════════════════════
 //  POST /api/emis/:emiId/mark-paid
-//  Mark a single EMI installment as paid
+//  Mark a single EMI installment as paid (full or partial)
+//  Body: { amount?: number, note?: string }
+//    - If amount is omitted or >= remaining → marks fully Paid
+//    - If amount < remaining → marks Partial
 // ══════════════════════════════════════════════
 router.post('/:emiId/mark-paid', protect, async (req, res) => {
     try {
@@ -131,20 +138,50 @@ router.post('/:emiId/mark-paid', protect, async (req, res) => {
         }
 
         if (emi.status === 'Paid') {
-            return res.status(400).json({ success: false, message: 'EMI is already marked as paid' });
+            return res.status(400).json({ success: false, message: 'EMI is already fully paid' });
         }
 
-        emi.status = 'Paid';
-        emi.paidDate = new Date();
-        emi.paidBy = req.user._id;
+        const remaining = emi.amount - emi.paidAmount;
+        const paymentAmount = req.body.amount !== undefined ? parseFloat(req.body.amount) : remaining;
+        const note = req.body.note || '';
+
+        if (paymentAmount <= 0) {
+            return res.status(400).json({ success: false, message: 'Payment amount must be greater than 0' });
+        }
+        if (paymentAmount > remaining) {
+            return res.status(400).json({ success: false, message: `Amount exceeds remaining balance of ${remaining}` });
+        }
+
+        // Record this payment
+        emi.paidAmount += paymentAmount;
+        emi.payments.push({
+            amount: paymentAmount,
+            date: new Date(),
+            paidBy: req.user._id,
+            note
+        });
+
+        // Update status based on how much is now paid
+        if (emi.paidAmount >= emi.amount) {
+            emi.status = 'Paid';
+            emi.paidDate = new Date();
+            emi.paidBy = req.user._id;
+        } else {
+            emi.status = 'Partial';
+        }
+
         await emi.save();
 
         // Update device balance (deduct the paid amount)
         await Device.findByIdAndUpdate(emi.device, {
-            $inc: { balance: -emi.amount }
+            $inc: { balance: -paymentAmount }
         });
 
-        res.json({ success: true, message: 'EMI marked as paid', data: emi });
+        res.json({
+            success: true,
+            message: emi.status === 'Paid' ? 'EMI fully paid' : `Partial payment recorded. Remaining: ${emi.amount - emi.paidAmount}`,
+            data: emi
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ success: false, message: 'Server error' });
@@ -185,8 +222,8 @@ router.put('/device/:imei', protect, async (req, res) => {
 
         let newSchedule = [];
         if (tenure > 0 && device.emiAmount > 0) {
-            // Find the highest installment number already paid
-            const lastPaid = await EmiPayment.findOne({ device: device._id, status: 'Paid' }).sort({ installmentNumber: -1 });
+            // Find the highest installment number already paid (fully or partially)
+            const lastPaid = await EmiPayment.findOne({ device: device._id, status: { $in: ['Paid', 'Partial'] } }).sort({ installmentNumber: -1 });
             const startInstallment = lastPaid ? lastPaid.installmentNumber + 1 : 1;
             const startDate = device.emiStartDate || new Date();
 
@@ -225,11 +262,11 @@ router.get('/history/:imei', protect, async (req, res) => {
         const device = await Device.findOne(query);
         if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
 
-        const history = await EmiPayment.find({ device: device._id, status: 'Paid' })
+        const history = await EmiPayment.find({ device: device._id, status: { $in: ['Paid', 'Partial'] } })
             .populate('paidBy', 'name phone')
             .sort({ paidDate: -1 });
 
-        const totalPaid = history.reduce((sum, e) => sum + e.amount, 0);
+        const totalPaid = history.reduce((sum, e) => sum + (e.paidAmount || e.amount), 0);
 
         res.json({
             success: true,

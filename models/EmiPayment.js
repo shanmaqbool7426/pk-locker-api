@@ -18,11 +18,14 @@ const emiPaymentSchema = new mongoose.Schema({
     installmentNumber: { type: Number, required: true },
 
     dueDate: { type: Date, required: true },
-    amount: { type: Number, required: true },
+    amount: { type: Number, required: true },       // Total installment amount
+
+    // Partial payment tracking
+    paidAmount: { type: Number, default: 0 },        // How much has been paid so far
 
     status: {
         type: String,
-        enum: ['Paid', 'Unpaid'],
+        enum: ['Paid', 'Partial', 'Unpaid'],
         default: 'Unpaid'
     },
 
@@ -32,6 +35,17 @@ const emiPaymentSchema = new mongoose.Schema({
         ref: 'Shopkeeper',
         default: null
     },
+
+    // Payment history — each partial payment is recorded
+    payments: [{
+        amount: { type: Number, required: true },
+        date: { type: Date, default: Date.now },
+        paidBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Shopkeeper'
+        },
+        note: { type: String, default: '' }
+    }],
 
     createdAt: { type: Date, default: Date.now }
 });

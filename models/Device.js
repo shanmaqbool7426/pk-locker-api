@@ -113,7 +113,8 @@ const deviceSchema = new mongoose.Schema({
     // Offline SMS Lock/Unlock Codes
     smsCodes: {
         lockCode: { type: String, default: null },
-        unlockCode: { type: String, default: null }
+        unlockCode: { type: String, default: null },
+        deregisterCode: { type: String, default: null }
     },
 
     // Deregistration
@@ -127,7 +128,15 @@ const deviceSchema = new mongoose.Schema({
         required: true
     },
 
-    registeredAt: { type: Date, default: Date.now }
+    registeredAt: { type: Date, default: Date.now },
+
+    // Last heartbeat timestamp — updated every time device pings server
+    lastSeen: { type: Date, default: null },
+
+    // Command Delivery Tracking — shows shopkeeper if last command reached the device
+    lastCommand: { type: String, default: null },       // e.g. "lock", "unlock", "deregister"
+    lastCommandSentAt: { type: Date, default: null },   // When server sent the FCM
+    lastCommandAckAt: { type: Date, default: null }    // When device confirmed receipt
 });
 
 module.exports = mongoose.model('Device', deviceSchema);

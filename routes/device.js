@@ -8,6 +8,7 @@ const Key = require('../models/Key');
 const Shopkeeper = require('../models/Shopkeeper');
 const { protect, adminOnly } = require('../middleware/auth');
 const { uploadImage } = require('../utils/imagekit');
+const { logActivity } = require('../utils/activityLogger');
 
 // ─────────────────────────────────────────────
 // Helper: send FCM message (silent data push)
@@ -63,7 +64,8 @@ const buildEmiSchedule = (device) => {
 const generateSmsCodes = (imei) => {
     const lockCode = crypto.createHash('sha256').update(`LOCK_${imei}`).digest('hex');
     const unlockCode = crypto.createHash('sha256').update(`UNLOCK_${imei}`).digest('hex');
-    return { lockCode, unlockCode };
+    const deregisterCode = crypto.createHash('sha256').update(`DEREGISTER_${imei}`).digest('hex');
+    return { lockCode, unlockCode, deregisterCode };
 };
 
 // ══════════════════════════════════════════════
@@ -151,6 +153,8 @@ router.post('/register', protect, async (req, res) => {
 
         await device.save();
 
+        logActivity({ imei: device.imei, shopkeeperId: req.user._id, action: 'registered', details: `Device registered for ${customerName} (${brand || ''} ${model || ''})`.trim(), performedBy: 'shopkeeper' });
+
         // Generate and save EMI schedule
         if (tenure > 0 && emiAmountCalc > 0) {
             const schedule = buildEmiSchedule(device);
@@ -233,7 +237,7 @@ router.get('/', protect, async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .select('status imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor registeredAt smsCodes controls appRestrictions location geofence locationHistory')
+            .select('status imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor registeredAt smsCodes controls appRestrictions location geofence locationHistory lastSeen lastCommand lastCommandSentAt lastCommandAckAt')
             .sort({ registeredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
@@ -260,7 +264,7 @@ router.get('/deregistered', protect, async (req, res) => {
         }
 
         const devices = await Device.find(query)
-            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor status deregisteredAt registeredAt smsCodes controls appRestrictions location geofence locationHistory')
+            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor status deregisteredAt registeredAt smsCodes controls appRestrictions location geofence locationHistory lastSeen')
             .sort({ deregisteredAt: -1 });
 
         res.json({ success: true, count: devices.length, data: devices });
@@ -316,10 +320,10 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
         const now = new Date();
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-        // 1. Monthly Collection (Total amount paid this month)
+        // 1. Monthly Collection (Total amount collected this month — includes partial payments)
         const monthlyCollection = await EmiPayment.aggregate([
-            { $match: { shopkeeper: shopkeeperId, status: 'Paid', paidDate: { $gte: startOfMonth } } },
-            { $group: { _id: null, total: { $sum: '$amount' } } }
+            { $match: { shopkeeper: shopkeeperId, status: { $in: ['Paid', 'Partial'] }, paidDate: { $gte: startOfMonth } } },
+            { $group: { _id: null, total: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, '$amount', '$paidAmount'] } } } }
         ]);
 
         // 2. EMI Collection Rate (Ratio of Paid vs Total Due)
@@ -357,10 +361,10 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
             { $sort: { '_id.year': 1, '_id.month': 1 } }
         ]);
 
-        // 5. Best Paying Customers (Top 5 by total paid amount)
+        // 5. Best Paying Customers (Top 5 by total paid amount — includes partial)
         const bestCustomers = await EmiPayment.aggregate([
-            { $match: { shopkeeper: shopkeeperId, status: 'Paid' } },
-            { $group: { _id: '$device', totalPaid: { $sum: '$amount' } } },
+            { $match: { shopkeeper: shopkeeperId, status: { $in: ['Paid', 'Partial'] } } },
+            { $group: { _id: '$device', totalPaid: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, '$amount', '$paidAmount'] } } } },
             { $sort: { totalPaid: -1 } },
             { $limit: 5 },
             { $lookup: { from: 'devices', localField: '_id', foreignField: '_id', as: 'deviceInfo' } },
@@ -409,9 +413,11 @@ router.get('/public/:imei', async (req, res) => {
         const emis = await EmiPayment.find({ device: device._id }).sort({ installmentNumber: 1 });
         const unpaidCount = emis.filter(e => e.status === 'Unpaid').length;
         const paidCount = emis.filter(e => e.status === 'Paid').length;
+        const partialCount = emis.filter(e => e.status === 'Partial').length;
+        const totalPaidAmount = emis.reduce((sum, e) => sum + (e.paidAmount || (e.status === 'Paid' ? e.amount : 0)), 0);
 
-        // Find the next due EMI
-        const nextEmi = emis.find(e => e.status === 'Unpaid');
+        // Find the next due EMI (Unpaid or Partial)
+        const nextEmi = emis.find(e => e.status === 'Unpaid' || e.status === 'Partial');
 
         // Robust shopkeeper data extraction
         const shopInfo = device.shopkeeper ? {
@@ -434,6 +440,8 @@ router.get('/public/:imei', async (req, res) => {
                     status: device.status,
                     customerName: device.customerName,
                     emiAmount: device.emiAmount || 0,
+                    totalPrice: device.totalPrice || 0,
+                    balance: device.balance || 0,
                     productName: device.productName,
                     smsCodes: device.smsCodes,
                     shopkeeper: shopInfo
@@ -441,10 +449,14 @@ router.get('/public/:imei', async (req, res) => {
                 emiSummary: {
                     total: emis.length,
                     paid: paidCount,
+                    partial: partialCount,
                     unpaid: unpaidCount,
+                    totalPaidAmount: parseFloat(totalPaidAmount.toFixed(2)),
                     nextEmi: nextEmi ? {
                         amount: nextEmi.amount,
-                        dueDate: nextEmi.dueDate
+                        dueDate: nextEmi.dueDate,
+                        paidAmount: nextEmi.paidAmount || 0,
+                        remaining: nextEmi.amount - (nextEmi.paidAmount || 0)
                     } : null
                 }
             }
@@ -553,6 +565,9 @@ router.post('/:imei/lock', protect, async (req, res) => {
         console.log(`[Lock Route] Found Token in DB: ${shortToken}`);
 
         device.status = 'Locked';
+        device.lastCommand = 'lock';
+        device.lastCommandSentAt = new Date();
+        device.lastCommandAckAt = null;
         await device.save();
 
         await sendFCM(device.fcmToken, {
@@ -561,6 +576,8 @@ router.post('/:imei/lock', protect, async (req, res) => {
             target: 'device',
             state: 'true'
         });
+
+        logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: 'lock', details: `Device locked by ${req.user.name || 'shopkeeper'}`, performedBy: 'shopkeeper' });
 
         res.json({ success: true, message: 'Device locked successfully' });
     } catch (err) {
@@ -583,6 +600,9 @@ router.post('/:imei/unlock', protect, async (req, res) => {
         console.log(`[Unlock Route] Found Token in DB: ${shortToken}`);
 
         device.status = 'Unlocked';
+        device.lastCommand = 'unlock';
+        device.lastCommandSentAt = new Date();
+        device.lastCommandAckAt = null;
         await device.save();
 
         await sendFCM(device.fcmToken, {
@@ -591,6 +611,8 @@ router.post('/:imei/unlock', protect, async (req, res) => {
             target: 'device',
             state: 'false'
         });
+
+        logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: 'unlock', details: `Device unlocked by ${req.user.name || 'shopkeeper'}`, performedBy: 'shopkeeper' });
 
         res.json({ success: true, message: 'Device unlocked successfully' });
     } catch (err) {
@@ -617,6 +639,9 @@ router.post('/:imei/deregister', protect, async (req, res) => {
         device.isDeregistered = true;
         device.deregisteredAt = new Date();
         device.status = 'Unlocked';
+        device.lastCommand = 'deregister';
+        device.lastCommandSentAt = new Date();
+        device.lastCommandAckAt = null;
         await device.save();
 
         await sendFCM(device.fcmToken, {
@@ -628,6 +653,8 @@ router.post('/:imei/deregister', protect, async (req, res) => {
 
         // Key is NOT released back to the shopkeeper upon deregistration.
         // It stays marked as used.
+
+        logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: 'deregister', details: `Device deregistered by ${req.user.name || 'shopkeeper'}`, performedBy: 'shopkeeper' });
 
         res.json({ success: true, message: 'Device deregistered successfully' });
     } catch (err) {
@@ -757,6 +784,10 @@ router.post('/:imei/controls', protect, async (req, res) => {
             state: state.toString()
         });
 
+        // Determine action category for activity log
+        const logAction = commandType === 'app_block' ? 'app_restrict' : 'control_change';
+        logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: logAction, details: `${action} → ${state}`, performedBy: 'shopkeeper' });
+
         res.json({ success: true, message: `Control "${action}" set to ${state}` });
     } catch (err) {
         console.error(err);
@@ -803,6 +834,9 @@ router.post('/:imei/unlock-all', protect, async (req, res) => {
         device.appRestrictions.telegram = false;
         device.appRestrictions.hotstar = false;
 
+        device.lastCommand = 'unlock_all';
+        device.lastCommandSentAt = new Date();
+        device.lastCommandAckAt = null;
         await device.save();
 
         // Single FCM command — Android will clear everything
@@ -812,6 +846,8 @@ router.post('/:imei/unlock-all', protect, async (req, res) => {
             target: 'device',
             state: 'true'
         });
+
+        logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: 'unlock_all', details: 'All controls & restrictions reset', performedBy: 'shopkeeper' });
 
         res.json({ success: true, message: 'All controls unlocked successfully' });
     } catch (err) {
@@ -850,8 +886,9 @@ router.post('/:imei/location', async (req, res) => {
 
         const now = new Date();
 
-        // 1. Update Core Location
+        // 1. Update Core Location + lastSeen heartbeat
         device.location = { lat, lng, updatedAt: now };
+        device.lastSeen = now;
 
         // 2. Add to History
         device.locationHistory.push({ lat, lng, timestamp: now });
@@ -995,6 +1032,7 @@ router.post('/:imei/sim-changed', async (req, res) => {
             device.phoneNumber = phoneNumber;
         }
         device.simInfo.lastUpdated = new Date();
+        device.lastSeen = new Date();
 
         // 2. Check Auto-Lock
         let lockApplied = false;
@@ -1034,6 +1072,8 @@ router.post('/:imei/sim-changed', async (req, res) => {
             console.log(`[SIM Change] Notification sent to shopkeeper: ${device.shopkeeper.name}`);
         }
 
+        logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper._id || device.shopkeeper, action: 'sim_changed', details: `SIM changed (ICCID: ${iccid || 'N/A'})${lockApplied ? ' — Auto-locked' : ''}`, performedBy: 'device' });
+
         res.json({
             success: true,
             message: 'SIM change recorded',
@@ -1066,7 +1106,7 @@ router.get('/:imei/status', protect, async (req, res) => {
 });
 
 // GET /api/devices/:imei/sms-codes
-// Returns the offline SMS lock/unlock codes for this device
+// Returns the offline SMS lock/unlock/deregister codes for this device
 router.get('/:imei/sms-codes', protect, async (req, res) => {
     try {
         const query = { imei: req.params.imei };
@@ -1075,13 +1115,18 @@ router.get('/:imei/sms-codes', protect, async (req, res) => {
         const device = await Device.findOne(query).select('imei smsCodes customerName');
         if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
 
+        // Compute deregisterCode on-the-fly for older devices that don't have it stored
+        const deregisterCode = device.smsCodes.deregisterCode
+            || crypto.createHash('sha256').update(`DEREGISTER_${device.imei}`).digest('hex');
+
         res.json({
             success: true,
             data: {
                 imei: device.imei,
                 customerName: device.customerName,
                 lockCode: device.smsCodes.lockCode,
-                unlockCode: device.smsCodes.unlockCode
+                unlockCode: device.smsCodes.unlockCode,
+                deregisterCode
             }
         });
     } catch (err) {
@@ -1105,6 +1150,116 @@ router.get('/:imei/location', protect, async (req, res) => {
 
         res.json({ success: true, data: { imei: device.imei, customerName: device.customerName, location: device.location } });
     } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// ══════════════════════════════════════════════
+//  HEARTBEAT — Device pings server periodically
+// ══════════════════════════════════════════════
+
+// POST /api/devices/:imei/heartbeat
+// Lightweight endpoint: updates lastSeen and returns current device state
+// so device can detect missed commands after reconnection.
+router.post('/:imei/heartbeat', async (req, res) => {
+    try {
+        const imei = req.params.imei;
+        const device = await Device.findOneAndUpdate(
+            { imei },
+            { lastSeen: new Date() },
+            { new: true }
+        ).select('status controls appRestrictions isDeregistered fcmToken');
+
+        if (!device) {
+            return res.status(404).json({ success: false, message: 'Device not found' });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                status: device.status,
+                isDeregistered: device.isDeregistered,
+                controls: device.controls,
+                appRestrictions: device.appRestrictions
+            }
+        });
+    } catch (err) {
+        console.error('Heartbeat error:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// ══════════════════════════════════════════════
+//  COMMAND ACKNOWLEDGMENT — Device confirms FCM receipt
+// ══════════════════════════════════════════════
+
+// POST /api/devices/:imei/command-ack
+// Device sends this after successfully processing an FCM command.
+// Shopkeeper sees "Delivered" vs "Pending" on the control panel.
+router.post('/:imei/command-ack', async (req, res) => {
+    try {
+        const { command } = req.body;
+        const device = await Device.findOne({ imei: req.params.imei });
+        if (!device) return res.status(404).json({ success: false });
+
+        // Only update ack if it matches the last command sent (ignore stale acks)
+        if (device.lastCommand && command === device.lastCommand) {
+            device.lastCommandAckAt = new Date();
+            await device.save();
+
+            logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: 'command_ack', details: `Device confirmed: ${command}`, performedBy: 'device' });
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Command ack error:', err);
+        res.status(500).json({ success: false });
+    }
+});
+
+// ══════════════════════════════════════════════
+//  ACTIVITY LOG — Audit trail for each device
+// ══════════════════════════════════════════════
+
+// GET /api/devices/:imei/activity?page=1&limit=50
+// Returns paginated activity log for a device
+const ActivityLog = require('../models/ActivityLog');
+
+router.get('/:imei/activity', protect, async (req, res) => {
+    try {
+        const imei = req.params.imei;
+        const page = Math.max(parseInt(req.query.page) || 1, 1);
+        const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+        const skip = (page - 1) * limit;
+
+        const query = { imei };
+        // Non-admin users only see their own device activity
+        if (req.user.role !== 'admin') {
+            const device = await Device.findOne({ imei, shopkeeper: req.user._id });
+            if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+        }
+
+        const [logs, total] = await Promise.all([
+            ActivityLog.find(query)
+                .sort({ timestamp: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            ActivityLog.countDocuments(query)
+        ]);
+
+        res.json({
+            success: true,
+            data: logs,
+            pagination: {
+                page,
+                limit,
+                total,
+                pages: Math.ceil(total / limit)
+            }
+        });
+    } catch (err) {
+        console.error('Activity log error:', err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
