@@ -8,9 +8,9 @@ const { allocateKeysToShopkeeper } = require('../utils/keyHelper');
 // Dynamic Pricing: More keys = Lower price per key
 const getDynamicPrice = (numKeys) => {
     const count = parseInt(numKeys);
-    if (count >= 50) return 200; // Wholesale Tier
-    if (count >= 10) return 250; // Dealer Tier
-    return 300;                  // Retail Tier
+    if (count >= 100) return 380; // Wholesale Tier
+    if (count >= 50) return 400;  // Dealer Tier
+    return 430;                   // Retail Tier
 };
 
 // POST /api/key-orders/wallet-pay
@@ -41,20 +41,14 @@ router.post('/wallet-pay', protect, async (req, res) => {
         });
         await order.save();
 
-        // 2. Add keys to balance
-        let keyRecord = await Key.findOne({ shopkeeper: req.user._id, platform: order.platform });
-        if (!keyRecord) {
-            keyRecord = new Key({ shopkeeper: req.user._id, platform: order.platform, totalKeys: 0, usedKeys: 0 });
-        }
-        keyRecord.totalKeys += parseInt(numKeys);
-        keyRecord.updatedAt = new Date();
-        await keyRecord.save();
+        // 2. Add keys to balance (via shared helper — handles referral bonus too)
+        const updatedKeys = await allocateKeysToShopkeeper(req.user._id, numKeys, order.platform);
 
         res.json({
             success: true,
             message: `Payment Successful via ${method}! ${numKeys} keys added instantly.`,
             transactionId: `TXN_${Math.random().toString(36).substring(7).toUpperCase()}`,
-            availableKeys: (keyRecord.totalKeys - keyRecord.usedKeys)
+            availableKeys: (updatedKeys.totalKeys - updatedKeys.usedKeys)
         });
     } catch (err) {
         console.error('Wallet pay error:', err);

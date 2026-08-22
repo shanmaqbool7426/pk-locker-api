@@ -161,10 +161,23 @@ router.post('/register', protect, async (req, res) => {
             await EmiPayment.insertMany(schedule);
         }
 
-        // Consume 1 key
-        keyRecord.usedKeys += 1;
-        keyRecord.updatedAt = new Date();
-        await keyRecord.save();
+        // Consume 1 key atomically (prevents race condition with concurrent registrations)
+        const consumed = await Key.findOneAndUpdate(
+            { shopkeeper: req.user._id, platform: devicePlatform, $expr: { $lt: ['$usedKeys', '$totalKeys'] } },
+            { $inc: { usedKeys: 1 }, $set: { updatedAt: new Date() } },
+            { new: true }
+        );
+        if (!consumed) {
+            // Extremely rare: another request consumed the last key between our check and save
+            console.error(`[Key Consume] Race condition — no keys left at save time for ${req.user._id}`);
+            // Rollback: remove the device we just created
+            await Device.deleteOne({ _id: device._id });
+            await EmiPayment.deleteMany({ imei: device.imei });
+            return res.status(403).json({
+                success: false,
+                message: 'Keys were just consumed by another registration. Please try again.'
+            });
+        }
 
         res.status(201).json({
             success: true,
@@ -651,8 +664,8 @@ router.post('/:imei/deregister', protect, async (req, res) => {
             state: 'true'
         });
 
-        // Key is NOT released back to the shopkeeper upon deregistration.
-        // It stays marked as used.
+        // Key is NOT released back — once consumed, it stays used.
+        // Shopkeeper needs a fresh key for each new device registration.
 
         logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: 'deregister', details: `Device deregistered by ${req.user.name || 'shopkeeper'}`, performedBy: 'shopkeeper' });
 
