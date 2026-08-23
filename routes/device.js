@@ -116,19 +116,39 @@ router.post('/register', protect, async (req, res) => {
         const startDate = emiStartDate ? new Date(emiStartDate) : new Date();
         const emiAmountCalc = emiAmount || (balance && tenure ? parseFloat((balance / tenure).toFixed(5)) : 0);
 
-        // --- Handle Image Uploads via ImageKit ---
+        // --- Handle Image Uploads via ImageKit (parallelized for speed) ---
+        // All 3 images uploaded simultaneously instead of sequentially.
+        // If any upload fails, we fall back to the original base64 string.
         let profileUrl = profilePicture;
         let cnicUrl = cnicProofImage;
         let guarantorCnicUrl = guarantor ? guarantor.cnicProofImage : null;
+        const uploadPromises = [];
 
         if (profilePicture && profilePicture.length > 500) {
-            profileUrl = await uploadImage(profilePicture, `profile_${imei}`, 'profiles');
+            uploadPromises.push(
+                uploadImage(profilePicture, `profile_${imei}`, 'profiles')
+                    .then(url => { profileUrl = url || profilePicture; })
+                    .catch(err => { console.error('[ImageKit] Profile upload failed:', err.message); /* fallback to base64 */ })
+            );
         }
         if (cnicProofImage && cnicProofImage.length > 500) {
-            cnicUrl = await uploadImage(cnicProofImage, `cnic_${imei}`, 'cnic_proofs');
+            uploadPromises.push(
+                uploadImage(cnicProofImage, `cnic_${imei}`, 'cnic_proofs')
+                    .then(url => { cnicUrl = url || cnicProofImage; })
+                    .catch(err => { console.error('[ImageKit] CNIC upload failed:', err.message); /* fallback to base64 */ })
+            );
         }
         if (guarantor && guarantor.cnicProofImage && guarantor.cnicProofImage.length > 500) {
-            guarantorCnicUrl = await uploadImage(guarantor.cnicProofImage, `guarantor_${imei}`, 'guarantor_proofs');
+            uploadPromises.push(
+                uploadImage(guarantor.cnicProofImage, `guarantor_${imei}`, 'guarantor_proofs')
+                    .then(url => { guarantorCnicUrl = url || guarantor.cnicProofImage; })
+                    .catch(err => { console.error('[ImageKit] Guarantor upload failed:', err.message); /* fallback to base64 */ })
+            );
+        }
+
+        // Wait for all uploads in parallel (30-45s → 10-15s)
+        if (uploadPromises.length > 0) {
+            await Promise.all(uploadPromises);
         }
 
 
@@ -657,19 +677,46 @@ router.post('/:imei/deregister', protect, async (req, res) => {
         device.lastCommandAckAt = null;
         await device.save();
 
-        await sendFCM(device.fcmToken, {
-            type: 'CONTROL',
-            command: 'deregister',
-            target: 'device',
-            state: 'true'
-        });
+        // Send FCM deregister command to customer's device
+        let fcmDelivered = false;
+        if (device.fcmToken) {
+            console.log(`[Deregister] Sending FCM deregister to device token: ${device.fcmToken.substring(0, 10)}...`);
+            try {
+                await sendFCM(device.fcmToken, {
+                    type: 'CONTROL',
+                    command: 'deregister',
+                    target: 'device',
+                    state: 'true'
+                });
+                fcmDelivered = true;
+            } catch (fcmErr) {
+                console.error('[Deregister] FCM send failed:', fcmErr.message);
+            }
+        } else {
+            console.warn('[Deregister] No FCM token for this device — customer app will not receive command automatically.');
+        }
+
+        // Compute SMS deregister code for manual fallback
+        const deregisterCode = device.smsCodes.deregisterCode
+            || crypto.createHash('sha256').update(`DEREGISTER_${device.imei}`).digest('hex');
 
         // Key is NOT released back — once consumed, it stays used.
         // Shopkeeper needs a fresh key for each new device registration.
 
         logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper, action: 'deregister', details: `Device deregistered by ${req.user.name || 'shopkeeper'}`, performedBy: 'shopkeeper' });
 
-        res.json({ success: true, message: 'Device deregistered successfully' });
+        res.json({
+            success: true,
+            message: fcmDelivered
+                ? 'Device deregistered. FCM command sent to customer device.'
+                : 'Device deregistered. FCM NOT delivered — send SMS manually.',
+            fcmDelivered,
+            smsFallback: {
+                code: deregisterCode,
+                customerPhone: device.phoneNumber || '',
+                instruction: `SMS bhejein customer ke number pe: DEREGISTER#${deregisterCode}`
+            }
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ success: false, message: 'Server error' });
