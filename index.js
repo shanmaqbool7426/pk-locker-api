@@ -163,6 +163,11 @@ app.post('/api/adb/setup-device-owner', async (req, res) => {
 
     logs.push(`Starting full Device Owner setup on: ${deviceId}`);
 
+    // 0. Disable Play Protect BEFORE setting device owner — prevents app from being flagged/blocked
+    await run('settings put global package_verifier_enable 0');
+    await run('settings put global verifier_verify_adb_installs 0');
+    logs.push('Play Protect: ✅ Disabled');
+
     // 1. Set Device Owner
     const r1 = await run('dpm set-device-owner com.pksafe.lock.manager/com.pksafe.lock.manager.receiver.AdminReceiver');
     logs.push(`Device Owner: ${r1.success ? '✅ SUCCESS' : '❌ FAILED'}`);
@@ -185,6 +190,40 @@ app.post('/api/adb/setup-device-owner', async (req, res) => {
 
     logs.push('🎉 Full Setup Complete!');
     res.json({ success: r1.success, logs });
+});
+
+// POST /api/adb/disable-play-protect
+// Disables Google Play Protect scanning BEFORE APK install — prevents "App blocked" warning
+// Body: { deviceId?: "...", targetIp?: "192.168.1.37:5555" }
+app.post('/api/adb/disable-play-protect', async (req, res) => {
+    let { deviceId, targetIp } = req.body;
+
+    if (!deviceId && !targetIp) {
+        return res.status(400).json({ success: false, message: 'deviceId or targetIp is required' });
+    }
+
+    const logs = [];
+
+    if (targetIp) {
+        if (!targetIp.includes(':')) targetIp = `${targetIp}:5555`;
+        logs.push(`Connecting ADB to ${targetIp}...`);
+        const connRes = await runAdb(['connect', targetIp], 10000);
+        logs.push(`Connect Output: ${connRes.output}`);
+        deviceId = targetIp;
+    }
+
+    const run = async (cmd) => {
+        const r = await runAdb(['-s', deviceId, 'shell', cmd], 20000);
+        logs.push(`CMD: ${cmd}\nRESULT: ${r.output}`);
+        return r;
+    };
+
+    logs.push('Disabling Play Protect scanning...');
+    await run('settings put global package_verifier_enable 0');
+    await run('settings put global verifier_verify_adb_installs 0');
+    logs.push('Play Protect: ✅ Disabled — APK install karein bina kisi block ke');
+
+    res.json({ success: true, logs });
 });
 
 // ── 404 handler ──────────────────────────────
