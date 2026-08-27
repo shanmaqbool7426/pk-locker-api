@@ -10,12 +10,21 @@ const shopkeeperSchema = new mongoose.Schema({
     referredByPhone: { type: String, default: null },
     referralRewardClaimed: { type: Boolean, default: false }, // Has the referrer been rewarded for this signup?
 
+    // Set only on shopkeepers created by a dealer (via POST /api/dealer/shopkeepers).
+    // Null for shopkeepers/dealers created directly by admin.
+    dealer: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Shopkeeper',
+        default: null
+    },
 
     // Role: 'admin' can see all devices & all shopkeepers
+    //       'dealer' creates shopkeeper accounts and distributes keys to them —
+    //                 no device/EMI/customer data visibility at all
     //       'shopkeeper' can only see their own devices
     role: {
         type: String,
-        enum: ['admin', 'shopkeeper'],
+        enum: ['admin', 'dealer', 'shopkeeper'],
         default: 'shopkeeper'
     },
 

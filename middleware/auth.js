@@ -34,4 +34,12 @@ const adminOnly = (req, res, next) => {
     next();
 };
 
-module.exports = { protect, adminOnly };
+// Allow only dealer role
+const dealerOnly = (req, res, next) => {
+    if (req.user.role !== 'dealer') {
+        return res.status(403).json({ success: false, message: 'Dealer access required' });
+    }
+    next();
+};
+
+module.exports = { protect, adminOnly, dealerOnly };

@@ -28,7 +28,10 @@ router.get('/shopkeepers', async (req, res) => {
         }
         if (isActive !== undefined) query.isActive = isActive === 'true';
 
-        const shopkeepers = await Shopkeeper.find(query).select('-password').sort({ createdAt: -1 });
+        const shopkeepers = await Shopkeeper.find(query)
+            .select('-password')
+            .populate('dealer', 'name shopName phone')
+            .sort({ createdAt: -1 });
 
         // Attach key stats to each shopkeeper
         const ids = shopkeepers.map(s => s._id);

@@ -52,12 +52,14 @@ const deviceRoutes = require('./routes/device');
 const emiRoutes = require('./routes/emi');
 const adminRoutes = require('./routes/admin');
 const keyOrderRoutes = require('./routes/keyOrders');
+const dealerRoutes = require('./routes/dealer');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/emis', emiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/key-orders', keyOrderRoutes);
+app.use('/api/dealer', dealerRoutes);
 
 // ── Auto-Update Route (Disabled by default - uncomment when pushing new version) ──
 app.get('/api/version', (req, res) => {
