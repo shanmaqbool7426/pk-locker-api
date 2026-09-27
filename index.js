@@ -63,18 +63,10 @@ app.use('/api/key-orders', keyOrderRoutes);
 app.use('/api/dealer', dealerRoutes);
 app.use('/api/config', configRoutes);
 
-// ── Auto-Update Route (Disabled by default - uncomment when pushing new version) ──
-app.get('/api/version', (req, res) => {
-    // Jab app update karni ho, tab versionCode app se zyada rakhein aur success: true karein
-    res.json({
-        success: false,
-        message: "No mandatory update available",
-        versionCode: 3,
-        versionName: "v1.2",
-        downloadUrl: "https://pk-locker-api.vercel.app/apk/update.apk",
-        forceUpdate: false
-    });
-});
+// ── Auto-Update Route ──────────────────────────────────────────────
+// Now managed via /api/config/update (admin-controlled).
+// AutoUpdater on all devices checks that endpoint for update config.
+// To push an update: go to App Updates screen → enable toggle → set versionCode higher than current → save.
 
 
 
