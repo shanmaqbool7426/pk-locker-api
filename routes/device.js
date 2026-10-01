@@ -255,7 +255,10 @@ router.post('/register', protect, async (req, res) => {
 router.get('/', protect, async (req, res) => {
     try {
         const { search, platform } = req.query;
-        const query = { shopkeeper: req.user._id, isDeregistered: false };
+        const isAdmin = req.user.role === 'admin'; // Admin sees devices of ALL shopkeepers
+
+        const query = { isDeregistered: false };
+        if (!isAdmin) query.shopkeeper = req.user._id;
 
         if (platform) query.platform = platform;
 
@@ -269,9 +272,17 @@ router.get('/', protect, async (req, res) => {
             ];
         }
 
-        const devices = await Device.find(query)
-            .select('status imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor registeredAt smsCodes controls appRestrictions location geofence locationHistory lastSeen lastCommand lastCommandSentAt lastCommandAckAt')
-            .sort({ registeredAt: -1 });
+        const baseFields = 'status imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor registeredAt smsCodes controls appRestrictions location geofence locationHistory lastSeen lastCommand lastCommandSentAt lastCommandAckAt';
+
+        let finder = Device.find(query).sort({ registeredAt: -1 });
+        if (isAdmin) {
+            // Include owner (shopkeeper) info so admin knows whose device it is
+            finder = finder.select(`${baseFields} shopkeeper`).populate('shopkeeper', 'name phone shopName');
+        } else {
+            finder = finder.select(baseFields);
+        }
+
+        const devices = await finder;
 
         res.json({ success: true, count: devices.length, data: devices });
     } catch (err) {
@@ -285,7 +296,10 @@ router.get('/', protect, async (req, res) => {
 router.get('/deregistered', protect, async (req, res) => {
     try {
         const { search } = req.query;
-        const query = { shopkeeper: req.user._id, isDeregistered: true };
+        const isAdmin = req.user.role === 'admin'; // Admin sees deregistered devices of ALL shopkeepers
+
+        const query = { isDeregistered: true };
+        if (!isAdmin) query.shopkeeper = req.user._id;
 
         if (search) {
             const regex = new RegExp(search, 'i');
@@ -296,9 +310,17 @@ router.get('/deregistered', protect, async (req, res) => {
             ];
         }
 
-        const devices = await Device.find(query)
-            .select('imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor status deregisteredAt registeredAt smsCodes controls appRestrictions location geofence locationHistory lastSeen')
-            .sort({ deregisteredAt: -1 });
+        const baseFields = 'imei imei2 brand model platform customerName phoneNumber cnic profilePicture cnicProofImage productName totalPrice downPayment balance emiTenure emiAmount emiStartDate guarantor status deregisteredAt registeredAt smsCodes controls appRestrictions location geofence locationHistory lastSeen';
+
+        let finder = Device.find(query).sort({ deregisteredAt: -1 });
+        if (isAdmin) {
+            // Include owner (shopkeeper) info for admin
+            finder = finder.select(`${baseFields} shopkeeper`).populate('shopkeeper', 'name phone shopName');
+        } else {
+            finder = finder.select(baseFields);
+        }
+
+        const devices = await finder;
 
         res.json({ success: true, count: devices.length, data: devices });
     } catch (err) {
@@ -312,12 +334,7 @@ router.get('/deregistered', protect, async (req, res) => {
 router.get('/stats', protect, async (req, res) => {
     try {
         const shopkeeperId = req.user._id;
-
-        // Key stats
-        const [androidKeys, iosKeys] = await Promise.all([
-            Key.findOne({ shopkeeper: shopkeeperId, platform: 'android' }),
-            Key.findOne({ shopkeeper: shopkeeperId, platform: 'ios' })
-        ]);
+        const isAdmin = req.user.role === 'admin'; // Admin sees global stats
 
         const buildKeyStat = (k) => ({
             totalKeys: k ? k.totalKeys : 0,
@@ -325,17 +342,40 @@ router.get('/stats', protect, async (req, res) => {
             availableKeys: k ? (k.totalKeys - k.usedKeys) : 0
         });
 
-        // Device counts
+        // Key stats (admin: totals across all shopkeepers)
+        let androidStat, iosStat;
+        if (isAdmin) {
+            const allKeys = await Key.find({});
+            const sumPlatform = (platform) => {
+                const rows = allKeys.filter(k => k.platform === platform);
+                const total = rows.reduce((s, k) => s + k.totalKeys, 0);
+                const used = rows.reduce((s, k) => s + k.usedKeys, 0);
+                return { totalKeys: total, usedKeys: used, availableKeys: total - used };
+            };
+            androidStat = sumPlatform('android');
+            iosStat = sumPlatform('ios');
+        } else {
+            const [androidKeys, iosKeys] = await Promise.all([
+                Key.findOne({ shopkeeper: shopkeeperId, platform: 'android' }),
+                Key.findOne({ shopkeeper: shopkeeperId, platform: 'ios' })
+            ]);
+            androidStat = buildKeyStat(androidKeys);
+            iosStat = buildKeyStat(iosKeys);
+        }
+
+        // Device counts (admin: across all shopkeepers)
+        const deviceScope = isAdmin ? {} : { shopkeeper: shopkeeperId };
         const [totalDevices, lockedDevices, deregisteredDevices] = await Promise.all([
-            Device.countDocuments({ shopkeeper: shopkeeperId, isDeregistered: false }),
-            Device.countDocuments({ shopkeeper: shopkeeperId, isDeregistered: false, status: 'Locked' }),
+            Device.countDocuments({ ...deviceScope, isDeregistered: false }),
+            Device.countDocuments({ ...deviceScope, isDeregistered: false, status: 'Locked' }),
+            Device.countDocuments({ ...deviceScope, isDeregistered: true }),
         ]);
 
         res.json({
             success: true,
             data: {
-                android: buildKeyStat(androidKeys),
-                ios: buildKeyStat(iosKeys),
+                android: androidStat,
+                ios: iosStat,
                 devices: { total: totalDevices, locked: lockedDevices, deregistered: deregisteredDevices }
             }
         });
@@ -350,18 +390,20 @@ router.get('/stats', protect, async (req, res) => {
 router.get('/dashboard-analytics', protect, async (req, res) => {
     try {
         const shopkeeperId = req.user._id;
+        const isAdmin = req.user.role === 'admin'; // Admin gets platform-wide analytics
+        const ownerMatch = isAdmin ? {} : { shopkeeper: shopkeeperId };
         const now = new Date();
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
         // 1. Monthly Collection (Total amount collected this month — includes partial payments)
         const monthlyCollection = await EmiPayment.aggregate([
-            { $match: { shopkeeper: shopkeeperId, status: { $in: ['Paid', 'Partial'] }, paidDate: { $gte: startOfMonth } } },
+            { $match: { ...ownerMatch, status: { $in: ['Paid', 'Partial'] }, paidDate: { $gte: startOfMonth } } },
             { $group: { _id: null, total: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, '$amount', '$paidAmount'] } } } }
         ]);
 
         // 2. EMI Collection Rate (Ratio of Paid vs Total Due)
         const collectionStats = await EmiPayment.aggregate([
-            { $match: { shopkeeper: shopkeeperId, dueDate: { $lte: now } } },
+            { $match: { ...ownerMatch, dueDate: { $lte: now } } },
             {
                 $group: {
                     _id: null,
@@ -374,7 +416,7 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
 
         // 3. High Risk Customers (>= 2 Overdue EMIs)
         const highRiskResults = await EmiPayment.aggregate([
-            { $match: { shopkeeper: shopkeeperId, status: 'Unpaid', dueDate: { $lte: now } } },
+            { $match: { ...ownerMatch, status: 'Unpaid', dueDate: { $lte: now } } },
             { $group: { _id: '$device', overdueCount: { $sum: 1 } } },
             { $match: { overdueCount: { $gte: 2 } } },
             { $lookup: { from: 'devices', localField: '_id', foreignField: '_id', as: 'deviceInfo' } },
@@ -384,7 +426,7 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
         // 4. Overdue Trend (Unpaid EMIs by Month for last 6 months)
         const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
         const overdueTrend = await EmiPayment.aggregate([
-            { $match: { shopkeeper: shopkeeperId, status: 'Unpaid', dueDate: { $gte: sixMonthsAgo, $lte: now } } },
+            { $match: { ...ownerMatch, status: 'Unpaid', dueDate: { $gte: sixMonthsAgo, $lte: now } } },
             {
                 $group: {
                     _id: { month: { $month: '$dueDate' }, year: { $year: '$dueDate' } },
@@ -396,7 +438,7 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
 
         // 5. Best Paying Customers (Top 5 by total paid amount — includes partial)
         const bestCustomers = await EmiPayment.aggregate([
-            { $match: { shopkeeper: shopkeeperId, status: { $in: ['Paid', 'Partial'] } } },
+            { $match: { ...ownerMatch, status: { $in: ['Paid', 'Partial'] } } },
             { $group: { _id: '$device', totalPaid: { $sum: { $cond: [{ $eq: ['$status', 'Paid'] }, '$amount', '$paidAmount'] } } } },
             { $sort: { totalPaid: -1 } },
             { $limit: 5 },
@@ -406,7 +448,7 @@ router.get('/dashboard-analytics', protect, async (req, res) => {
 
         // 6. Device Status (Locked vs Unlocked)
         const deviceStatus = await Device.aggregate([
-            { $match: { shopkeeper: shopkeeperId, isDeregistered: false } },
+            { $match: { ...ownerMatch, isDeregistered: false } },
             { $group: { _id: '$status', count: { $sum: 1 } } }
         ]);
 

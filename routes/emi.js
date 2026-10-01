@@ -39,11 +39,14 @@ router.get('/upcoming', protect, async (req, res) => {
         const future = new Date();
         future.setDate(future.getDate() + days);
 
-        const emis = await EmiPayment.find({
-            shopkeeper: req.user._id,
+        // Admin sees upcoming EMIs across ALL shopkeepers
+        const filter = {
             status: { $in: ['Unpaid', 'Partial'] },
             dueDate: { $lte: future }
-        })
+        };
+        if (req.user.role !== 'admin') filter.shopkeeper = req.user._id;
+
+        const emis = await EmiPayment.find(filter)
             .populate({
                 path: 'device',
                 select: 'imei brand model customerName phoneNumber totalPrice profilePicture platform'
