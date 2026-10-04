@@ -145,6 +145,8 @@ router.get('/me', protect, async (req, res) => {
                 shopName: shopkeeper.shopName,
                 role: shopkeeper.role,
                 isActive: shopkeeper.isActive,
+                // Per-user app-update state for the client's popup gating
+                updatePending: shopkeeper.updatePending === true,
                 createdAt: shopkeeper.createdAt
             },
             keyStats

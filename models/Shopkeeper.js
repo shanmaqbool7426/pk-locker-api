@@ -30,6 +30,14 @@ const shopkeeperSchema = new mongoose.Schema({
 
     isActive: { type: Boolean, default: true },
 
+    // Per-user app-update state (managed server-side):
+    //   true  -> admin pushed a newer versionCode; this user's update popup
+    //            is armed for them only.
+    //   false -> the popup has already been served/consumed on their device
+    //            (client POSTs /api/config/update-consumed).
+    // Armed for ALL users by POST /api/config/update on every versionCode bump.
+    updatePending: { type: Boolean, default: false },
+
     createdAt: { type: Date, default: Date.now }
 });
 
