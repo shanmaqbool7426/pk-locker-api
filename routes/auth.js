@@ -210,4 +210,3 @@ router.patch('/update-fcm-token', protect, async (req, res) => {
 });
 
 module.exports = router;
-
