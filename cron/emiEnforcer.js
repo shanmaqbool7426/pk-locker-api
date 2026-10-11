@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const EmiPayment = require('../models/EmiPayment');
-const Device = require('../models/Device');
-const { sendFCM } = require('../utils/fcm');
+// Device model not needed — comes via populate('device') on EmiPayment
+// sendFCM not needed — NO auto-lock; only shopkeeper/admin locks manually
 
 const checkOverdueEmis = async () => {
     console.log('[EMI Enforcer] Starting daily EMI compliance check...');
@@ -13,7 +13,7 @@ const checkOverdueEmis = async () => {
             dueDate: { $lt: now }
         }).populate('device');
 
-        let lockedCount = 0;
+        let overdueCount = 0;
 
         for (const emi of overdueEmis) {
             const device = emi.device;
@@ -22,29 +22,17 @@ const checkOverdueEmis = async () => {
             const diffTime = Math.abs(now - new Date(emi.dueDate));
             const overdueDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
-            // Day 5 Overdue => FULL DEVICE LOCK
-            if (overdueDays >= 5 && device.status !== 'Locked') {
-                device.status = 'Locked';
-                device.alerts.push({
-                    type: 'EMI_LOCK',
-                    message: `Device locked due to EMI overdue by ${overdueDays} days.`,
-                    timestamp: new Date()
-                });
-                await device.save();
-
-                await sendFCM(device.fcmToken, {
-                    type: 'CONTROL',
-                    command: 'lock',
-                    target: 'device',
-                    state: 'true'
-                });
-                
-                lockedCount++;
-                console.log(`[EMI Enforcer] CRITICAL: IMEI ${device.imei} locked (Overdue ${overdueDays} days)`);
+            // ── LOG ONLY — NO AUTO LOCK ──────────────────────────────────
+            // Device is NEVER locked automatically, regardless of overdue days.
+            // Only the shopkeeper or admin can manually lock a customer device.
+            // This cron just logs overdue EMIs for reporting purposes.
+            if (overdueDays >= 1) {
+                overdueCount++;
+                console.log(`[EMI Enforcer] OVERDUE: IMEI ${device.imei} — ${overdueDays} days past due (EMI Rs. ${emi.amount}). Awaiting manual action from shopkeeper/admin.`);
             }
         }
 
-        console.log(`[EMI Enforcer] Completed! Actions => Locked: ${lockedCount}`);
+        console.log(`[EMI Enforcer] Completed! Overdue EMIs found: ${overdueCount} (NO auto-lock — manual action required)`);
     } catch (err) {
         console.error('[EMI Enforcer] Error running compliance check:', err.message);
     }

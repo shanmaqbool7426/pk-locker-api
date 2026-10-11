@@ -1136,7 +1136,7 @@ router.post('/:imei/sim-changed', async (req, res) => {
         device.simInfo.lastUpdated = new Date();
         device.lastSeen = new Date();
 
-        // 2. Check Auto-Lock
+        // 2. Check Auto-Lock on SIM change
         let lockApplied = false;
         if (device.controls.autoLockOnSimChange) {
             device.status = 'Locked';
@@ -1263,12 +1263,22 @@ router.get('/:imei/location', protect, async (req, res) => {
 // POST /api/devices/:imei/heartbeat
 // Lightweight endpoint: updates lastSeen and returns current device state
 // so device can detect missed commands after reconnection.
+// Also accepts the device's local lock status so server stays in sync
+// (e.g., if device was locked locally via FCM and server didn't know).
 router.post('/:imei/heartbeat', async (req, res) => {
     try {
         const imei = req.params.imei;
+        const update = { lastSeen: new Date() };
+
+        // If device reports its lock status, sync it to the server
+        // so shopkeeper always sees the real device state.
+        if (req.body && req.body.status && ['Locked', 'Unlocked'].includes(req.body.status)) {
+            update.status = req.body.status;
+        }
+
         const device = await Device.findOneAndUpdate(
             { imei },
-            { lastSeen: new Date() },
+            update,
             { new: true }
         ).select('status controls appRestrictions isDeregistered fcmToken');
 
