@@ -97,12 +97,22 @@ router.post('/register', protect, async (req, res) => {
         const devicePlatform = platform || 'android';
 
         // Check key availability
-        let keyRecord = await Key.findOne({ shopkeeper: req.user._id, platform: devicePlatform });
-        if (!keyRecord) {
-            // Auto-create key record with 0 balance so admin can see it
-            keyRecord = await Key.create({ shopkeeper: req.user._id, platform: devicePlatform, totalKeys: 0, usedKeys: 0 });
+        // Admin registers from the GLOBAL key pool (same aggregate view as /stats),
+        // shopkeepers/dealers consume from their own allocation only.
+        const isAdminUser = req.user.role === 'admin';
+        let poolAvailable = 0;
+        if (isAdminUser) {
+            const poolKeys = await Key.find({ platform: devicePlatform });
+            poolAvailable = poolKeys.reduce((s, k) => s + (k.totalKeys - k.usedKeys), 0);
+        } else {
+            let keyRecord = await Key.findOne({ shopkeeper: req.user._id, platform: devicePlatform });
+            if (!keyRecord) {
+                // Auto-create key record with 0 balance so admin can see it
+                keyRecord = await Key.create({ shopkeeper: req.user._id, platform: devicePlatform, totalKeys: 0, usedKeys: 0 });
+            }
+            poolAvailable = keyRecord.availableKeys;
         }
-        if (keyRecord.availableKeys <= 0) {
+        if (poolAvailable <= 0) {
             return res.status(403).json({
                 success: false,
                 message: `No available ${devicePlatform} keys. Please contact admin to allocate more keys.`
@@ -182,11 +192,28 @@ router.post('/register', protect, async (req, res) => {
         }
 
         // Consume 1 key atomically (prevents race condition with concurrent registrations)
-        const consumed = await Key.findOneAndUpdate(
-            { shopkeeper: req.user._id, platform: devicePlatform, $expr: { $lt: ['$usedKeys', '$totalKeys'] } },
-            { $inc: { usedKeys: 1 }, $set: { updatedAt: new Date() } },
-            { new: true }
-        );
+        // Admin consumes from the global pool — take from the record with the MOST available keys.
+        let consumed = null;
+        if (isAdminUser) {
+            const candidates = await Key.find({ platform: devicePlatform }).lean();
+            const best = candidates
+                .map(k => ({ id: k._id, avail: k.totalKeys - k.usedKeys }))
+                .filter(k => k.avail > 0)
+                .sort((a, b) => b.avail - a.avail)[0];
+            if (best) {
+                consumed = await Key.findOneAndUpdate(
+                    { _id: best.id, $expr: { $gt: [{ $subtract: ['$totalKeys', '$usedKeys'] }, 0] } },
+                    { $inc: { usedKeys: 1 }, $set: { updatedAt: new Date() } },
+                    { new: true }
+                );
+            }
+        } else {
+            consumed = await Key.findOneAndUpdate(
+                { shopkeeper: req.user._id, platform: devicePlatform, $expr: { $lt: ['$usedKeys', '$totalKeys'] } },
+                { $inc: { usedKeys: 1 }, $set: { updatedAt: new Date() } },
+                { new: true }
+            );
+        }
         if (!consumed) {
             // Extremely rare: another request consumed the last key between our check and save
             console.error(`[Key Consume] Race condition — no keys left at save time for ${req.user._id}`);
