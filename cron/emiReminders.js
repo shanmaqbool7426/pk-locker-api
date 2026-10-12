@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const EmiPayment = require('../models/EmiPayment');
 const Device = require('../models/Device');
 const { sendFCM } = require('../utils/fcm');
+const { logActivity } = require('../utils/activityLogger');
 const admin = require('firebase-admin');
 
 // Mock communication gateway for WhatsApp & SMS integrations (e.g. Twilio, UltraMsg)
@@ -13,7 +14,10 @@ const sendCommunication = async (channel, toPhone, message) => {
 
 // Extends sendFCM to support pure push notifications instead of just background data syncs
 const sendPushNotification = async (fcmToken, title, body) => {
-    if (!fcmToken) return;
+    if (!fcmToken) {
+        console.log(`[FCM Push] Skipped — no token for device`);
+        return;
+    }
     try {
         await admin.messaging().send({
             notification: { title, body },
@@ -32,8 +36,7 @@ const checkUpcomingReminders = async () => {
         const now = new Date();
         const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         
-        // Target specific windows (0 days, 1 day, 3 days ahead)
-        // Check everything that is Unpaid
+        // Find all unpaid EMIs (active devices only)
         const unpaidEmis = await EmiPayment.find({ status: 'Unpaid' }).populate('device');
 
         for (const emi of unpaidEmis) {
@@ -43,7 +46,7 @@ const checkUpcomingReminders = async () => {
             const dueDate = new Date(emi.dueDate);
             const startOfDue = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
             
-            // Difference in days (floor used to ignore exact hour mismatches)
+            // Difference in days (floor to ignore exact hour mismatches)
             const diffTime = startOfDue - startOfToday;
             const daysUntilDue = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
@@ -51,26 +54,92 @@ const checkUpcomingReminders = async () => {
             const amt = emi.amount;
             const dateStr = startOfDue.toISOString().split('T')[0];
 
-            if (daysUntilDue === 3) {
-                await sendCommunication('whatsapp', phone, `Dear ${device.customerName}, your EMI of Rs. ${amt} for ${device.brand} is due on ${dateStr}. Please ensure payment to avoid any late notices.`);
-            } 
-            else if (daysUntilDue === 1) {
-                const msg = `ALERT: Your EMI of Rs. ${amt} is due TOMORROW (${dateStr}). Pay immediately to avoid service interruptions.`;
-                await sendCommunication('sms', phone, msg);
-                await sendPushNotification(device.fcmToken, "EMI Due Tomorrow", msg);
-            } 
-            else if (daysUntilDue === 0) {
-                const msg = `URGENT: Your EMI of Rs. ${amt} is DUE TODAY. Please pay immediately.`;
-                await sendCommunication('sms', phone, msg);
-                await sendPushNotification(device.fcmToken, "EMI DUE TODAY", msg);
-                
-                // Add an alert to the system log so shopkeepers are aware
-                device.alerts.push({
-                    type: 'EMI_DUE_TODAY',
-                    message: `Customer reached deadline today: Rs. ${amt} due.`,
-                    timestamp: new Date()
-                });
-                await device.save();
+            // ── 3 DAYS OR LESS BEFORE DUE (including overdue) ──────────────
+            if (daysUntilDue <= 3) {
+                let title, msg;
+
+                if (daysUntilDue === 3) {
+                    title = "EMI Reminder";
+                    msg = `Dear ${device.customerName}, your EMI of Rs. ${amt} for ${device.brand || 'device'} is due on ${dateStr}. Please pay to avoid late notices.`;
+                }
+                else if (daysUntilDue === 2) {
+                    title = "EMI Due in 2 Days";
+                    msg = `Your EMI of Rs. ${amt} is due on ${dateStr}. Pay now to avoid penalties.`;
+                }
+                else if (daysUntilDue === 1) {
+                    title = "EMI Due Tomorrow";
+                    msg = `ALERT: Your EMI of Rs. ${amt} is due TOMORROW (${dateStr}). Pay immediately to avoid service interruptions.`;
+                }
+                else if (daysUntilDue === 0) {
+                    title = "EMI DUE TODAY";
+                    msg = `URGENT: Your EMI of Rs. ${amt} is DUE TODAY. Please pay immediately.`;
+                }
+                else {
+                    // Overdue (daysUntilDue < 0)
+                    const overdueDays = Math.abs(daysUntilDue);
+                    title = "EMI OVERDUE";
+                    msg = `WARNING: Your EMI of Rs. ${amt} was due on ${dateStr} (${overdueDays} day${overdueDays > 1 ? 's' : ''} overdue). Pay immediately to avoid device lock.`;
+                }
+
+                // Push notification every day in the window
+                await sendPushNotification(device.fcmToken, title, msg);
+
+                // SMS/WhatsApp at key milestones
+                if (daysUntilDue === 3) {
+                    await sendCommunication('whatsapp', phone, msg);
+                }
+                else if (daysUntilDue <= 1) {
+                    await sendCommunication('sms', phone, msg);
+                }
+
+                // ── AUTO-LOCK ON OVERDUE ──────────────────────────────────────
+                // When due date has passed (daysUntilDue < 0), auto-lock the device
+                if (daysUntilDue < 0) {
+                    const overdueDays = Math.abs(daysUntilDue);
+                    
+                    // Update device status to Locked
+                    if (device.status !== 'Locked') {
+                        device.status = 'Locked';
+                        await device.save();
+                        console.log(`[EMI Auto-Lock] Device ${device.imei} LOCKED — EMI overdue by ${overdueDays} day(s)`);
+                    }
+
+                    // Send FCM lock command to device
+                    await sendFCM(device.fcmToken, {
+                        type: 'CONTROL',
+                        command: 'lock',
+                        target: 'device',
+                        state: 'true'
+                    });
+
+                    // Log activity for shopkeeper
+                    logActivity({
+                        imei: device.imei,
+                        shopkeeperId: device.shopkeeper,
+                        action: 'emi_overdue_lock',
+                        details: `Device auto-locked: EMI Rs. ${amt} overdue by ${overdueDays} day(s) (due: ${dateStr})`,
+                        performedBy: 'system'
+                    });
+
+                    // Add alert to device for shopkeeper visibility
+                    device.alerts.push({
+                        type: 'EMI_OVERDUE_LOCK',
+                        message: `Device auto-locked: EMI Rs. ${amt} overdue by ${overdueDays} day(s). Due: ${dateStr}`,
+                        timestamp: new Date()
+                    });
+                    await device.save();
+
+                    console.log(`[EMI Auto-Lock] IMEI ${device.imei} — overdue ${overdueDays} day(s), lock command sent`);
+                }
+                // Due day: log alert but NO lock yet (last chance)
+                else if (daysUntilDue === 0) {
+                    device.alerts.push({
+                        type: 'EMI_DUE_TODAY',
+                        message: `Customer reached deadline today: Rs. ${amt} due.`,
+                        timestamp: new Date()
+                    });
+                    await device.save();
+                }
             }
         }
     } catch(err) {
