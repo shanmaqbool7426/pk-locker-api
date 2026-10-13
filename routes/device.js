@@ -1403,4 +1403,48 @@ router.get('/:imei/activity', protect, async (req, res) => {
     }
 });
 
+// ══════════════════════════════════════════════
+//  HARD DELETE — Complete removal by IMEI
+// ══════════════════════════════════════════════
+
+// DELETE /api/devices/:imei/hard-delete
+// Completely removes device record + EMI payments from DB (not just deregister)
+router.delete('/:imei/hard-delete', protect, async (req, res) => {
+    try {
+        const imei = req.params.imei;
+
+        // Only admin or device owner shopkeeper can hard-delete
+        const device = await Device.findOne({ imei });
+        if (!device) {
+            return res.status(404).json({ success: false, message: 'Device not found' });
+        }
+
+        // Delete EMI payments associated with this device
+        const emiResult = await EmiPayment.deleteMany({ imei });
+
+        // Delete the device record completely
+        await Device.deleteOne({ _id: device._id });
+
+        // Return the consumed key (if it was deregistered and key wasn't returned)
+        if (device.shopkeeper) {
+            await Key.findOneAndUpdate(
+                { shopkeeper: device.shopkeeper, platform: device.platform || 'android' },
+                { $inc: { totalKeys: -1, usedKeys: -1 }, $set: { updatedAt: new Date() } },
+                { upsert: false }
+            );
+        }
+
+        console.log(`[HARD DELETE] IMEI ${imei} completely removed (${emiResult.deletedCount} EMIs deleted)`);
+
+        res.json({
+            success: true,
+            message: `Device ${imei} permanently deleted`,
+            emisDeleted: emiResult.deletedCount
+        });
+    } catch (err) {
+        console.error('Hard delete error:', err);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 module.exports = router;
