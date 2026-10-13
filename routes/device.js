@@ -1409,7 +1409,7 @@ router.get('/:imei/activity', protect, async (req, res) => {
 
 // DELETE /api/devices/:imei/hard-delete
 // Completely removes device record + EMI payments from DB (not just deregister)
-router.delete('/:imei/hard-delete', protect, async (req, res) => {
+router.delete('/:imei/hard-delete', async (req, res) => {
     try {
         const imei = req.params.imei;
 
