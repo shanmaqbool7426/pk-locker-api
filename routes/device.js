@@ -42,14 +42,14 @@ const sendFCM = async (fcmToken, data) => {
 const buildEmiSchedule = (device) => {
     const { _id, imei, shopkeeper, emiTenure, emiAmount, emiStartDate } = device;
     const schedule = [];
-    for (let i = 0; i < emiTenure; i++) {
+    for (let i = 1; i <= emiTenure; i++) {
         const dueDate = new Date(emiStartDate);
         dueDate.setMonth(dueDate.getMonth() + i);
         schedule.push({
             device: _id,
             imei,
             shopkeeper,
-            installmentNumber: i + 1,
+            installmentNumber: i,
             dueDate,
             amount: emiAmount,
             status: 'Unpaid'
