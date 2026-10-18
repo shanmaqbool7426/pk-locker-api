@@ -9,6 +9,7 @@ const Shopkeeper = require('../models/Shopkeeper');
 const { protect, adminOnly } = require('../middleware/auth');
 const { uploadImage } = require('../utils/imagekit');
 const { logActivity } = require('../utils/activityLogger');
+const { sendWhatsApp } = require('../utils/whatsapp');
 
 // ─────────────────────────────────────────────
 // Helper: send FCM message (silent data push)
@@ -81,7 +82,7 @@ router.post('/register', protect, async (req, res) => {
             customerName, cnic, phoneNumber, profilePicture, cnicProofImage,
             productName, totalPrice, downPayment, balance,
             emiTenure, emiStartDate, emiAmount,
-            guarantor
+            guarantor, contactPhone
         } = req.body;
 
         if (!imei || !customerName || !cnic || !phoneNumber) {
@@ -176,6 +177,9 @@ router.post('/register', protect, async (req, res) => {
                 ...guarantor,
                 cnicProofImage: guarantorCnicUrl
             } : undefined,
+            // Lock-screen support number: explicit contactPhone wins, else the
+            // registerer's own phone (admin-registering-for-shopkeeper case).
+            contactPhone: contactPhone || req.user.phone,
             smsCodes,
             status: 'Unlocked',
             shopkeeper: req.user._id
@@ -546,6 +550,7 @@ router.get('/public/:imei', async (req, res) => {
                     balance: device.balance || 0,
                     productName: device.productName,
                     smsCodes: device.smsCodes,
+                    contactPhone: device.contactPhone || shopInfo.phone,
                     shopkeeper: shopInfo
                 },
                 emiSummary: {
@@ -622,7 +627,7 @@ router.put('/:imei', protect, async (req, res) => {
             'brand', 'model', 'androidVersion', 'imei2', 'platform',
             'customerName', 'cnic', 'phoneNumber', 'profilePicture',
             'productName', 'totalPrice', 'downPayment', 'balance',
-            'emiTenure', 'emiStartDate', 'emiAmount', 'guarantor'
+            'emiTenure', 'emiStartDate', 'emiAmount', 'guarantor', 'contactPhone'
         ];
         allowedFields.forEach(f => {
             if (req.body[f] !== undefined) device[f] = req.body[f];
@@ -1180,13 +1185,14 @@ router.post('/:imei/sim-changed', async (req, res) => {
 
         await device.save();
 
-        // 3. Notify Shopkeeper
+        // 3. Notify Shopkeeper — include the NEW number so the shopkeeper
+        // can contact the customer on the fresh SIM without opening the app.
         if (device.shopkeeper && device.shopkeeper.fcmToken) {
             await admin.messaging().send({
                 token: device.shopkeeper.fcmToken,
                 notification: {
                     title: '🚨 SIM Change Alert!',
-                    body: `Customer ${device.customerName} changed their SIM card. Device ${lockApplied ? 'is now LOCKED' : 'detected change'}.`
+                    body: `Customer ${device.customerName} changed their SIM card.${phoneNumber ? ` New number: ${phoneNumber}.` : ' New number unavailable.'} Device ${lockApplied ? 'is now LOCKED' : 'detected change'}.`
                 },
                 data: {
                     type: 'SIM_ALERT',
@@ -1199,6 +1205,18 @@ router.post('/:imei/sim-changed', async (req, res) => {
                 }
             });
             console.log(`[SIM Change] Notification sent to shopkeeper: ${device.shopkeeper.name}`);
+        }
+
+        // 4. WhatsApp alert to shopkeeper (UltraMsg gateway — skips silently
+        //    if ULTRAMSG env vars are not configured)
+        if (device.shopkeeper && device.shopkeeper.phone) {
+            const waMsg = `🚨 *PK Locker — SIM Change Alert*\n\n` +
+                `Customer: ${device.customerName}\n` +
+                `IMEI: ${device.imei}\n` +
+                `New SIM: ${iccid || 'Unknown'}\n` +
+                (phoneNumber ? `New Number: ${phoneNumber}\n` : '') +
+                `Status: ${lockApplied ? '🔒 Device LOCKED' : '⚠️ Change detected (auto-lock OFF)'}`;
+            await sendWhatsApp(device.shopkeeper.phone, waMsg);
         }
 
         logActivity({ imei: device.imei, shopkeeperId: device.shopkeeper._id || device.shopkeeper, action: 'sim_changed', details: `SIM changed (ICCID: ${iccid || 'N/A'})${lockApplied ? ' — Auto-locked' : ''}`, performedBy: 'device' });

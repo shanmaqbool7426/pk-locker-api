@@ -40,6 +40,11 @@ const deviceSchema = new mongoose.Schema({
         cnicProofImage: { type: String, default: null } // NEW: Guarantor's CNIC proof image
     },
 
+    // Customer-facing contact number shown on the LOCK screen.
+    // Distinct from the registerer's own phone: when admin registers on behalf
+    // of a shopkeeper, the shopkeeper's support number is stored here.
+    contactPhone: { type: String, default: null },
+
     // Status & Location
     status: {
         type: String,
