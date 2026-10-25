@@ -92,44 +92,12 @@ const checkUpcomingReminders = async () => {
                     await sendCommunication('sms', phone, msg);
                 }
 
-                // ── AUTO-LOCK ON OVERDUE ──────────────────────────────────────
-                // When due date has passed (daysUntilDue < 0), auto-lock the device
+                // ── NO AUTO-LOCK ON OVERDUE ───────────────────────────────────
+                // User mandate: Only manual lock by shopkeeper/admin.
+                // Notifications continue, but device is NEVER auto-locked.
                 if (daysUntilDue < 0) {
                     const overdueDays = Math.abs(daysUntilDue);
-                    
-                    // Update device status to Locked
-                    if (device.status !== 'Locked') {
-                        device.status = 'Locked';
-                        await device.save();
-                        console.log(`[EMI Auto-Lock] Device ${device.imei} LOCKED — EMI overdue by ${overdueDays} day(s)`);
-                    }
-
-                    // Send FCM lock command to device
-                    await sendFCM(device.fcmToken, {
-                        type: 'CONTROL',
-                        command: 'lock',
-                        target: 'device',
-                        state: 'true'
-                    });
-
-                    // Log activity for shopkeeper
-                    logActivity({
-                        imei: device.imei,
-                        shopkeeperId: device.shopkeeper,
-                        action: 'emi_overdue_lock',
-                        details: `Device auto-locked: EMI Rs. ${amt} overdue by ${overdueDays} day(s) (due: ${dateStr})`,
-                        performedBy: 'system'
-                    });
-
-                    // Add alert to device for shopkeeper visibility
-                    device.alerts.push({
-                        type: 'EMI_OVERDUE_LOCK',
-                        message: `Device auto-locked: EMI Rs. ${amt} overdue by ${overdueDays} day(s). Due: ${dateStr}`,
-                        timestamp: new Date()
-                    });
-                    await device.save();
-
-                    console.log(`[EMI Auto-Lock] IMEI ${device.imei} — overdue ${overdueDays} day(s), lock command sent`);
+                    console.log(`[EMI Overdue] IMEI ${device.imei} — overdue ${overdueDays} day(s). Awaiting manual lock by shopkeeper/admin.`);
                 }
                 // Due day: log alert but NO lock yet (last chance)
                 else if (daysUntilDue === 0) {

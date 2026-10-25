@@ -1168,20 +1168,9 @@ router.post('/:imei/sim-changed', async (req, res) => {
         device.simInfo.lastUpdated = new Date();
         device.lastSeen = new Date();
 
-        // 2. Check Auto-Lock on SIM change
-        let lockApplied = false;
-        if (device.controls.autoLockOnSimChange) {
-            device.status = 'Locked';
-            lockApplied = true;
-
-            // Send FCM to device to enforce lock
-            await sendFCM(device.fcmToken, {
-                type: 'CONTROL',
-                command: 'lock',
-                target: 'device',
-                state: 'true'
-            });
-        }
+        // 2. NO AUTO-LOCK on SIM change — user mandate: manual lock only
+        // Just record the SIM change; shopkeeper/admin will lock manually if needed.
+        const lockApplied = false;
 
         await device.save();
 
