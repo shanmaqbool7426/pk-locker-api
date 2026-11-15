@@ -51,6 +51,7 @@ const deviceSchema = new mongoose.Schema({
         enum: ['Locked', 'Unlocked'],
         default: 'Unlocked'
     },
+    emergencyCode: { type: String, default: null }, // One-time emergency unlock code (changes after each use)
     location: {
         lat: { type: Number },
         lng: { type: Number },

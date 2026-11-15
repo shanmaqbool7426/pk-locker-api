@@ -627,7 +627,8 @@ router.put('/:imei', protect, async (req, res) => {
             'brand', 'model', 'androidVersion', 'imei2', 'platform',
             'customerName', 'cnic', 'phoneNumber', 'profilePicture',
             'productName', 'totalPrice', 'downPayment', 'balance',
-            'emiTenure', 'emiStartDate', 'emiAmount', 'guarantor', 'contactPhone'
+            'emiTenure', 'emiStartDate', 'emiAmount', 'guarantor', 'contactPhone',
+            'emergencyCode' // One-time emergency unlock code (synced from device)
         ];
         allowedFields.forEach(f => {
             if (req.body[f] !== undefined) device[f] = req.body[f];
@@ -820,6 +821,7 @@ router.post('/:imei/controls', protect, async (req, res) => {
         let updated = false;
         let commandType = 'state_change';
         let targetName = action;
+        let fcmStateOverride = null;
 
         console.log(`[Control Request] Action: ${action}, State: ${JSON.stringify(state)}, IMEI: ${req.params.imei}`);
 
@@ -874,9 +876,22 @@ router.post('/:imei/controls', protect, async (req, res) => {
         }
         // 3. Main Lock/Unlock Status
         else if (action === 'lock' || action === 'unlock' || action === 'LOCK_STATUS') {
-            device.status = (action === 'lock' || (state === true || state === 'true')) ? 'Locked' : 'Unlocked';
+            // 'lock' => always lock, 'unlock' => always unlock (regardless of `state`),
+            // 'LOCK_STATUS' => driven by `state`.
+            const shouldLock = action === 'lock'
+                ? true
+                : action === 'unlock'
+                    ? false
+                    : (state === true || state === 'true');
+            device.status = shouldLock ? 'Locked' : 'Unlocked';
+            // The phone treats command "lock" as ALWAYS lock, so an unlock must be sent
+            // as "state_change" with state=false (same as POST /:imei/unlock).
+            commandType = shouldLock ? 'lock' : 'state_change';
+            fcmStateOverride = shouldLock ? 'true' : 'false';
+            device.lastCommand = shouldLock ? 'lock' : 'unlock';
+            device.lastCommandSentAt = new Date();
+            device.lastCommandAckAt = null;
             updated = true;
-            commandType = 'lock';
             targetName = 'device';
         }
         // 4. Manual Push Notification
@@ -915,7 +930,7 @@ router.post('/:imei/controls', protect, async (req, res) => {
             type: 'CONTROL',
             command: commandType,
             target: targetName,
-            state: state.toString()
+            state: fcmStateOverride !== null ? fcmStateOverride : state.toString()
         });
 
         // Determine action category for activity log
@@ -1286,6 +1301,28 @@ router.get('/:imei/location', protect, async (req, res) => {
 
         res.json({ success: true, data: { imei: device.imei, customerName: device.customerName, location: device.location } });
     } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// POST /api/devices/:imei/emergency-code
+// Called by the customer phone (no login, like heartbeat) to store its current one-time
+// emergency unlock code so the shopkeeper can read it. It does NOT unlock anything.
+router.post('/:imei/emergency-code', async (req, res) => {
+    try {
+        const { emergencyCode } = req.body || {};
+        if (typeof emergencyCode !== 'string' || !emergencyCode.trim()) {
+            return res.status(400).json({ success: false, message: 'emergencyCode is required' });
+        }
+        const device = await Device.findOneAndUpdate(
+            { imei: req.params.imei },
+            { emergencyCode: emergencyCode.trim() },
+            { new: true }
+        ).select('_id');
+        if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Emergency code sync error:', err);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
